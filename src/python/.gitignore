@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+dist/
+build/
+*.egg-info/
+flash_agents/wasm/core.wasm
+flash_agents/wasm/core.bundle.js
+flash_agents/wasm/CORE_WASM_SHA256.txt
