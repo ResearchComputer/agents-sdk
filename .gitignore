@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.codex
+.rc-agent-cli/
+.rc-agent-cli-logs/
+.env
+.omx/
+.worktrees/
+.pi-agent-cli/
