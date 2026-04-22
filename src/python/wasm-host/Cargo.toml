@@ -1,0 +1,24 @@
+[package]
+name = "rc_agents_wasm"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "rc_agents_wasm"
+crate-type = ["cdylib"]
+
+# NOTE: Plan pinned wasmtime 26.0 / pyo3 0.22 / pyo3-asyncio. As of 2026-04,
+# the current stable is wasmtime 43.0.1, pyo3 0.28.3, and the pyo3-asyncio
+# crate has been renamed to pyo3-async-runtimes (0.28.0). Bumping to the
+# latest stable across all of them; bindgen syntax + WasiView traits changed
+# with the bump (see bindings.rs / agent.rs comments).
+[dependencies]
+wasmtime = { version = "43", features = ["component-model", "async"] }
+wasmtime-wasi = "43"
+wasmtime-wasi-http = "43"
+pyo3 = { version = "0.28", features = ["extension-module"] }
+pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
