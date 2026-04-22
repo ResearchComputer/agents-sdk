@@ -1,5 +1,6 @@
-"""LlmClient Protocol, LlmRequest. OpenAiCompatLlmClient added in Task 3.3."""
+"""LlmClient Protocol, LlmRequest, and OpenAiCompatLlmClient."""
 
 from flash_agents.llm.client import LlmClient, LlmRequest
+from flash_agents.llm.openai_compat import OpenAiCompatLlmClient
 
-__all__ = ["LlmClient", "LlmRequest"]
+__all__ = ["LlmClient", "LlmRequest", "OpenAiCompatLlmClient"]
