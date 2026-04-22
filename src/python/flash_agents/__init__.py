@@ -8,11 +8,15 @@ from flash_agents.errors import (
     ToolError,
     WasmHostError,
 )
+from flash_agents.tools import Tool, ToolContext, tool
 
 __version__ = "0.1.0"
 
 __all__ = [
     "Agent",
+    "Tool",
+    "ToolContext",
+    "tool",
     "ConfigError",
     "FlashAgentError",
     "LlmError",

@@ -28,6 +28,20 @@ def pi_ai_to_openai_request(req: LlmRequest) -> dict:
         "messages": openai_messages,
         "stream": True,
     }
+    # Forward tool declarations if the core gave them to us.
+    tools = json.loads(req.tools_json or "[]")
+    if tools:
+        payload["tools"] = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t.get("name"),
+                    "description": t.get("description", ""),
+                    "parameters": t.get("parameters") or t.get("inputSchema") or {},
+                },
+            }
+            for t in tools
+        ]
     for key in ("temperature", "top_p", "max_tokens", "seed"):
         if key in options:
             payload[key] = options[key]
@@ -81,12 +95,19 @@ def _flatten_text_content(content: Any) -> str:
 
 
 @dataclass
+class _ToolCallBuf:
+    content_index: int
+    id: str = ""
+    name: str = ""
+    arguments_str: str = ""
+
+
+@dataclass
 class OpenAiStreamDecoder:
     """Stateful decoder across OpenAI SSE chunks.
 
-    Emits events matching pi-ai's `AssistantMessageEvent` discriminated
-    union. Text-only path covered; delta.tool_calls decoding is exercised
-    separately in Chunk 4.
+    Emits events matching pi-ai's `AssistantMessageEvent` union. Handles
+    text deltas and tool-call deltas.
     """
     model_id: str
     provider: str
@@ -96,6 +117,10 @@ class OpenAiStreamDecoder:
     _text_ended: bool = False
     _done_emitted: bool = False
     _accumulated_text: str = ""
+    # OpenAI tool_calls stream: keyed by the `index` field in delta.tool_calls[*].
+    _tool_calls: dict[int, _ToolCallBuf] = field(default_factory=dict)
+    # contentIndex counter across text + tool-call entries.
+    _next_content_index: int = 0
     _timestamp_ms: int = field(default_factory=lambda: int(time.time() * 1000))
 
     def consume_chunk(self, chunk: dict) -> Iterator[dict]:
@@ -113,6 +138,7 @@ class OpenAiStreamDecoder:
         if "content" in delta and delta["content"]:
             if not self._text_started:
                 self._text_started = True
+                self._next_content_index = max(self._next_content_index, 1)
                 yield {"type": "text_start", "contentIndex": 0, "partial": self._snapshot_message()}
             self._accumulated_text += delta["content"]
             yield {
@@ -122,6 +148,38 @@ class OpenAiStreamDecoder:
                 "partial": self._snapshot_message(),
             }
 
+        for tc in (delta.get("tool_calls") or []):
+            idx = tc.get("index", 0)
+            fn = tc.get("function") or {}
+            if idx not in self._tool_calls:
+                content_idx = self._next_content_index
+                self._next_content_index += 1
+                self._tool_calls[idx] = _ToolCallBuf(
+                    content_index=content_idx,
+                    id=tc.get("id", ""),
+                    name=fn.get("name", ""),
+                )
+                yield {
+                    "type": "toolcall_start",
+                    "contentIndex": content_idx,
+                    "partial": self._snapshot_message(),
+                }
+            buf = self._tool_calls[idx]
+            # Subsequent chunks may carry more id/name/args
+            if tc.get("id"):
+                buf.id = tc["id"]
+            if fn.get("name"):
+                buf.name = fn["name"]
+            args_delta = fn.get("arguments", "")
+            if args_delta:
+                buf.arguments_str += args_delta
+                yield {
+                    "type": "toolcall_delta",
+                    "contentIndex": buf.content_index,
+                    "delta": args_delta,
+                    "partial": self._snapshot_message(),
+                }
+
         if finish_reason is not None and not self._done_emitted:
             reason = _map_finish_reason(finish_reason)
             if self._text_started and not self._text_ended:
@@ -130,6 +188,20 @@ class OpenAiStreamDecoder:
                     "type": "text_end",
                     "contentIndex": 0,
                     "content": self._accumulated_text,
+                    "partial": self._snapshot_message(),
+                }
+            # Emit toolcall_end for every accumulated tool call.
+            for _idx, buf in sorted(self._tool_calls.items(), key=lambda kv: kv[0]):
+                parsed_args = _safe_json_parse(buf.arguments_str)
+                yield {
+                    "type": "toolcall_end",
+                    "contentIndex": buf.content_index,
+                    "toolCall": {
+                        "type": "toolCall",
+                        "id": buf.id,
+                        "name": buf.name,
+                        "arguments": parsed_args,
+                    },
                     "partial": self._snapshot_message(),
                 }
             self._done_emitted = True
@@ -166,9 +238,21 @@ class OpenAiStreamDecoder:
         stop_reason: Optional[str] = None,
         error_message: Optional[str] = None,
     ) -> dict:
+        content: list[dict] = []
+        if self._accumulated_text:
+            content.append({"type": "text", "text": self._accumulated_text})
+        for _idx, buf in sorted(self._tool_calls.items(), key=lambda kv: kv[0]):
+            content.append({
+                "type": "toolCall",
+                "id": buf.id,
+                "name": buf.name,
+                "arguments": _safe_json_parse(buf.arguments_str) if final else {},
+            })
+        if not content:
+            content.append({"type": "text", "text": ""})
         msg: dict[str, Any] = {
             "role": "assistant",
-            "content": [{"type": "text", "text": self._accumulated_text}],
+            "content": content,
             "api": self.api,
             "provider": self.provider,
             "model": self.model_id,
@@ -179,6 +263,15 @@ class OpenAiStreamDecoder:
         if error_message is not None:
             msg["errorMessage"] = error_message
         return msg
+
+
+def _safe_json_parse(s: str) -> Any:
+    if not s:
+        return {}
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        return {}
 
 
 def _map_finish_reason(openai_reason: str) -> str:

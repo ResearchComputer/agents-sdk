@@ -71,12 +71,22 @@ export function makeHostTools(): SdkTool[] {
       const parsed = JSON.parse(result.outputJson);
       if (result.isError) {
         // Core's afterToolCall middleware turns thrown errors into tool-result
-        // messages with is_error=true so the LLM sees and can recover.
-        const e: Error & { detail?: unknown } = new Error(
-          typeof parsed === "object" && parsed && "error" in parsed
-            ? String((parsed as any).error)
-            : "tool error",
-        );
+        // messages with is_error=true so the LLM sees and can recover. We
+        // format the Error.message as "{type}: {error}\n{traceback}" so the
+        // LLM sees full diagnostic context, not just the error text.
+        const detail = (typeof parsed === "object" && parsed !== null) ? parsed as Record<string, unknown> : {};
+        const parts: string[] = [];
+        if (typeof detail.type === "string" && typeof detail.error === "string") {
+          parts.push(`${detail.type}: ${detail.error}`);
+        } else if (typeof detail.error === "string") {
+          parts.push(detail.error);
+        } else {
+          parts.push("tool error");
+        }
+        if (typeof detail.traceback === "string" && detail.traceback.length > 0) {
+          parts.push(detail.traceback);
+        }
+        const e: Error & { detail?: unknown } = new Error(parts.join("\n"));
         e.detail = parsed;
         throw e;
       }

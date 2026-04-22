@@ -72,11 +72,28 @@ class Agent:
     ) -> "Agent":
         if not isinstance(model, dict) or not {"id", "provider", "api"} <= set(model):
             raise ConfigError("model must be a dict with keys 'id', 'provider', 'api'")
-        # Tools are wired in Chunk 4; for now this parameter is accepted
-        # but not yet plumbed through to registered Python tools.
-        _ = tools
 
         loop = asyncio.get_running_loop()
+        effective_cwd = cwd or "/flash-agents"
+
+        from flash_agents.tools.base import _Decorated, Tool
+        from flash_agents.tools.context import ToolContext
+        from flash_agents.tools.registry import CanonicalTool, ToolRegistry
+
+        registry = ToolRegistry()
+        for t in (tools or []):
+            if isinstance(t, _Decorated):
+                registry.register(t.canonical)
+            elif isinstance(t, Tool):
+                registry.register(t.canonical)
+            elif isinstance(t, CanonicalTool):
+                registry.register(t)
+            else:
+                raise ConfigError(
+                    f"tools[{len(registry)}] is not a recognized tool "
+                    f"(got {type(t).__name__}). Use @tool, subclass Tool, "
+                    f"or pass a CanonicalTool."
+                )
 
         def _llm_stream_factory(
             *,
@@ -88,8 +105,6 @@ class Agent:
             tools_json: str,
             options_json: str,
         ) -> AsyncIterator[str]:
-            """Adapter: Rust calls us synchronously with kwargs; we return
-            the async iterator produced by llm.stream(request)."""
             from flash_agents.llm.client import LlmRequest
             req = LlmRequest(
                 model_id=model_id,
@@ -102,27 +117,60 @@ class Agent:
             )
             return llm.stream(req)
 
+        tools_list_json = json.dumps(registry.list_json())
+
         def _list_tools_callback() -> str:
-            # No tools registered in Chunk 2.
-            return "[]"
+            return tools_list_json
 
         async def _execute_tool_callback(
             *, callId: str, toolName: str, inputJson: str,
         ) -> dict:
-            # Wired in Chunk 4. For now, all tool calls fail with a clear error.
+            rec = registry.get(toolName)
+            if rec is None:
+                return {
+                    "callId": callId,
+                    "isError": True,
+                    "outputJson": json.dumps({
+                        "error": f"unknown tool: {toolName}",
+                        "type": "ToolError",
+                    }),
+                }
+            try:
+                args = json.loads(inputJson)
+            except json.JSONDecodeError as e:
+                return {
+                    "callId": callId,
+                    "isError": True,
+                    "outputJson": json.dumps({
+                        "error": f"invalid JSON args: {e}",
+                        "type": "ToolError",
+                    }),
+                }
+            ctx = ToolContext(
+                cwd=effective_cwd, call_id=callId, logger=_TOOL_LOGGER,
+            )
+            try:
+                result = await rec.execute(args, ctx)
+            except Exception as exc:  # noqa: BLE001 — tool boundary swallows all
+                return {
+                    "callId": callId,
+                    "isError": True,
+                    "outputJson": json.dumps({
+                        "error": str(exc),
+                        "type": type(exc).__name__,
+                        "traceback": traceback.format_exc(),
+                    }),
+                }
             return {
                 "callId": callId,
-                "isError": True,
-                "outputJson": json.dumps({
-                    "error": f"tool {toolName!r} not registered",
-                    "type": "ConfigError",
-                }),
+                "isError": False,
+                "outputJson": json.dumps(result),
             }
 
         config_json = json.dumps({
             "model": model,
             "systemPrompt": system_prompt,
-            "cwd": cwd or "/flash-agents",
+            "cwd": effective_cwd,
         })
         try:
             inner = await _wasm_ext.Agent.create(
