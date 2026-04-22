@@ -53,12 +53,20 @@ class Agent:
         inner: Any,
         llm: LlmClient,
         loop: asyncio.AbstractEventLoop,
+        memory: Any,
+        memory_top_k: int,
+        mcp_servers: list,
     ) -> None:
         self._inner = inner
         self._llm = llm
         self._loop = loop
         self._call_lock = asyncio.Lock()
         self._disposed = False
+        self._memory = memory
+        self._memory_top_k = memory_top_k
+        self._mcp_servers = mcp_servers
+
+    _MEMORY_UNSET: Any = object()
 
     @classmethod
     async def create(
@@ -69,12 +77,33 @@ class Agent:
         system_prompt: str = "",
         cwd: str | None = None,
         tools: list | None = None,
+        memory: Any = _MEMORY_UNSET,
+        memory_top_k: int = 5,
+        mcp_servers: list | None = None,
     ) -> "Agent":
         if not isinstance(model, dict) or not {"id", "provider", "api"} <= set(model):
             raise ConfigError("model must be a dict with keys 'id', 'provider', 'api'")
 
         loop = asyncio.get_running_loop()
         effective_cwd = cwd or "/flash-agents"
+
+        # Memory: default FilesystemMemoryStore; None disables; any other
+        # object must implement MemoryStore Protocol (load/save/remove).
+        if memory is cls._MEMORY_UNSET:
+            from flash_agents.memory import FilesystemMemoryStore
+            memory = FilesystemMemoryStore()
+        elif memory is None:
+            pass
+        else:
+            if not all(hasattr(memory, a) for a in ("load", "save", "remove")):
+                raise ConfigError(
+                    "memory must implement MemoryStore Protocol "
+                    "(load/save/remove async methods), or be None"
+                )
+
+        # MCP: register + warn if any. Not dispatched in v1.
+        from flash_agents.mcp import _warn_if_registered
+        validated_mcp = _warn_if_registered(mcp_servers)
 
         from flash_agents.tools.base import _Decorated, Tool
         from flash_agents.tools.context import ToolContext
@@ -182,7 +211,11 @@ class Agent:
             )
         except RuntimeError as err:
             raise WasmHostError(str(err)) from err
-        return cls(inner=inner, llm=llm, loop=loop)
+        return cls(
+            inner=inner, llm=llm, loop=loop,
+            memory=memory, memory_top_k=memory_top_k,
+            mcp_servers=validated_mcp,
+        )
 
     def _check_loop(self) -> None:
         try:
@@ -205,10 +238,14 @@ class Agent:
         if self._disposed:
             raise WasmHostError("agent has been disposed")
 
+        memory = self._memory
+        memory_top_k = self._memory_top_k
+
         async def iterator() -> AsyncIterator[dict]:
             async with self._call_lock:
+                extra_system = await _compose_memory_block(memory, message, memory_top_k)
                 try:
-                    stream = await self._inner.prompt(message, None)
+                    stream = await self._inner.prompt(message, extra_system)
                 except RuntimeError as err:
                     raise WasmHostError(str(err)) from err
                 try:
@@ -240,3 +277,25 @@ class Agent:
 
     async def __aexit__(self, *exc_info: Any) -> None:
         await self.dispose()
+
+
+async def _compose_memory_block(
+    memory: Any, query: str, top_k: int,
+) -> str | None:
+    """Load memories, retrieve the top-k matches, render as an <memories>
+    block suitable for the agent's extra_system slot. Returns None if the
+    memory store is disabled or no matches are selected."""
+    if memory is None:
+        return None
+    from flash_agents.memory.retrieve import retrieve as _retrieve
+    memories = await memory.load()
+    if not memories:
+        return None
+    selections = _retrieve(memories, query=query, max_items=top_k)
+    if not selections:
+        return None
+    rendered = "\n\n".join(
+        f"<memory name=\"{s.memory.name}\">\n{s.memory.content}\n</memory>"
+        for s in selections
+    )
+    return f"<memories>\n{rendered}\n</memories>"
