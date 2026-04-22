@@ -140,15 +140,19 @@ world flash-agent-core {
 
 **Why JSON blobs rather than structured WIT records:** matches the existing `messages-json` / `tools-json` convention, avoids re-declaring every pi-agent-core type in WIT, keeps componentize-js codegen small.
 
+**Image input is deliberately omitted from the WIT `prompt`.** The core's `prompt(message, images?)` accepts image content, but Python image input is out of scope for v1 (see §10). When image support lands, `prompt` gains a third parameter (e.g., `images: option<list<u8>>` or `images-json: option<string>`); no other WIT changes required.
+
 ## 5. Core (`src/core/`) changes
 
-Only one change is required in the core layer: the agent's `prompt()` accepts an optional per-turn system addendum.
+Only one change is required in the core layer: the agent's existing `prompt(message, images?)` signature (see `src/core/factory.ts:813`) grows a third optional parameter `extraSystem?: string`. The returned Agent object shape (mcp, sessions, memory, swarm, costTracker, prompt, dispose, snapshot, fork, …) is otherwise unchanged.
 
-- `createAgentCore(...)` returns `{ prompt(message, images?, extraSystem?) }`.
+- New signature: `prompt(message: string, images?: ImageContent[], extraSystem?: string): Promise<void>`.
 - The internal turn loop in `src/core/factory.ts` concatenates `extraSystem` onto the assembled system prompt for that LLM call only. Not persisted into message history; does not mutate `config.systemPrompt`.
 - Default parameter keeps existing callers (Node host, existing tests) unaffected.
 
-No other `src/core/` changes. The wasm guest at `src/python/wasm-guest/entrypoint.ts` replaces the stub's `tools: []` with tools constructed from `host-tools.list-tools()` output. Each tool's `execute()` closure calls `host-tools.execute-tool(...)`.
+**Migration note — WIT package rename.** The existing guest at `examples/python-stub/wasm/` uses `package research-computer:rc-agents@0.1.0` and imports from `research-computer:rc-agents/host-llm@0.1.0`. The new guest at `src/python/wasm-guest/` uses `research-computer:flash-agents@0.1.0`. Every `import * as … from "research-computer:rc-agents/…"` in `entrypoint.ts` / `llm-bridge.ts` changes to `research-computer:flash-agents/…` in lockstep with the WIT file. This only affects the new guest; the old stub's WIT is left alone during the transition and the stub directory is removed at the end.
+
+**No other `src/core/` changes.** The wasm guest at `src/python/wasm-guest/entrypoint.ts` replaces the stub's `tools: []` with tools constructed from `host-tools.list-tools()` output. Each tool's `execute()` closure calls `host-tools.execute-tool(...)`. The new guest inherits the project-wide "no `node:*` imports in non-test core code" rule (CLAUDE.md); the guest is componentize-js input and must stay portable.
 
 ## 6. Python public API
 
@@ -218,6 +222,8 @@ class WebFetch(Tool):
 
 `tools=[...]` accepts decorated callables, `Tool` subclasses, or `Tool` instances. Internally all normalize to a single canonical shape before being handed to the guest via `list-tools`.
 
+**`ToolContext` access:** `Tool` subclasses receive `ctx` as the second `execute()` parameter. For `@tool`-decorated functions, `ctx` is **opt-in** — if the function signature includes a parameter named `ctx` with annotation `ToolContext`, it is injected and excluded from the generated JSON Schema; otherwise it is not passed. This keeps the common case (tools that don't need context) clean while giving decorated tools a clear way to reach `cwd`, `call_id`, and the logger.
+
 ### LLM clients
 
 ```python
@@ -242,25 +248,31 @@ class LlmClient(Protocol):
 
 ### Memory
 
+The Python `Memory` dataclass mirrors core's `Memory` interface (`src/core/types.ts:72`) verbatim — same field names, same types, same semantics — so a `retrieve()` scoring function can match Node's output for shared fixtures.
+
 ```python
-from typing import Protocol
+from typing import Protocol, Literal
 from dataclasses import dataclass
 
+MemoryType = Literal["user", "feedback", "project", "reference"]
+
 @dataclass
-class MemoryEntry:
-    id: str
-    content: str
-    metadata: dict[str, str]
+class Memory:
+    name: str              # matches core Memory.name; used as remove() key
+    description: str       # matches core Memory.description
+    type: MemoryType       # matches core Memory.type
+    content: str           # matches core Memory.content
 
 class MemoryStore(Protocol):
-    async def load(self) -> list[MemoryEntry]: ...
-    async def save(self, entry: MemoryEntry) -> None: ...
-    async def remove(self, entry_id: str) -> None: ...
+    async def load(self) -> list[Memory]: ...
+    async def save(self, memory: Memory) -> None: ...
+    async def remove(self, name: str) -> None: ...
 ```
 
-- `FilesystemMemoryStore(root="~/.flash-agents/memory")` is the default when `memory=` is omitted. Per-entry Markdown files with YAML frontmatter; atomic write via tmp-and-rename; identical format to Node's `NodeMemoryStore`.
+- `FilesystemMemoryStore(root="~/.flash-agents/memory")` is the default when `memory=` is omitted. On-disk format is **bit-compatible with `createNodeMemoryStore` in `src/node/memory/node-memory-store.ts`**: one `.md` file per memory, three-field frontmatter (`name`, `description`, `type`) — **not full YAML**, just line-regex-parseable — followed by `\n---\n\n{content}\n`. Filenames are `sanitizeFilename(name) + ".md"` where `sanitizeFilename` lowercases then maps `[^a-z0-9_-]` → `-`, collapses consecutive `-`, and trims leading/trailing `-`. Files are atomically written via tmp-and-rename. A directory written by Node can be read by Python and vice versa.
+- We depend on `pyyaml` only to *defensively* parse a malformed/extended frontmatter cleanly; writes use the same three-line format Node writes.
 - `Agent.create(memory=None)` disables memory entirely (no loads, no injection).
-- Retrieval happens per-turn: `load()` → `retrieve(entries, query, top_k)` keyword scoring → serialized `<memory>...</memory>` block passed as `extra-system` on the WIT `prompt` call.
+- Retrieval happens per-turn: `load()` → `retrieve(memories, query, top_k)` keyword scoring → serialized `<memory>...</memory>` block passed as `extra-system` on the WIT `prompt` call.
 - No embedding retrieval; no agent-initiated writes; no cache beyond a single `load()`'s result.
 
 ### MCP (registration only in v1)
@@ -281,8 +293,22 @@ class McpServer:
 
 ### Events
 
-`agent.prompt(...)` yields typed dicts matching the core's `AgentEvent` shape:
-`agent_start`, `turn_start`, `message_start`, `message_update`, `tool_call_start`, `tool_call_end`, `turn_end`, `agent_end`. A `TypedDict` per variant plus a union alias `AgentEvent` is exported for type hints.
+`agent.prompt(...)` yields typed dicts matching **pi-agent-core's `AgentEvent` union** exactly (see `node_modules/@mariozechner/pi-agent-core/dist/types.d.ts`, exported as `AgentEvent`). The variants and their fields are:
+
+| `type` | Additional fields |
+|---|---|
+| `agent_start` | — |
+| `agent_end` | `messages: AgentMessage[]` |
+| `turn_start` | — |
+| `turn_end` | `message: AgentMessage`, `toolResults: ToolResultMessage[]` |
+| `message_start` | `message: AgentMessage` |
+| `message_update` | `message: AgentMessage`, `assistantMessageEvent: AssistantMessageEvent` |
+| `message_end` | `message: AgentMessage` |
+| `tool_execution_start` | `toolCallId: string`, `toolName: string`, `args: any` |
+| `tool_execution_update` | `toolCallId: string`, `toolName: string`, `args: any`, `partialResult: any` |
+| `tool_execution_end` | `toolCallId: string`, `toolName: string`, `result: any`, `isError: bool` |
+
+`flash_agents._events` exports one `TypedDict` per variant plus `AgentEvent` as a `typing.Union` for type hints. Field names are preserved in camelCase (matching the JSON coming out of the guest) rather than re-cased to snake_case — this keeps the Python-side shape drop-in compatible with the JSON each event is encoded as across the WIT boundary.
 
 ### Errors
 
@@ -296,7 +322,7 @@ class ToolError(FlashAgentError): ...
 
 - `ConfigError` raised synchronously during `Agent.create(...)` or `@tool` decoration.
 - `LlmError` raised from `LlmClient.stream(...)` surfaces as a `message_end` event with `stopReason: "error"`.
-- Tool exceptions become `tool-result { is_error: true, output_json: {"error", "type", "traceback"} }` and are fed back to the LLM for recovery. `tool_call_end` events carry `isError: true`. Tool exceptions do **not** propagate out of `agent.prompt()`.
+- Tool exceptions become `tool-result { is_error: true, output_json: {"error", "type", "traceback"} }` and are fed back to the LLM for recovery. `tool_execution_end` events carry `isError: true`. Tool exceptions do **not** propagate out of `agent.prompt()`.
 - `WasmHostError` is the only structural failure that escapes `agent.prompt()`.
 
 ## 7. Tool wiring — control flow
@@ -304,29 +330,41 @@ class ToolError(FlashAgentError): ...
 ### At `Agent.create(...)`
 
 1. Normalize `tools=[...]` into canonical `Tool` records (`{name, description, input_schema, execute}`). Decorator form runs schema inference here.
-2. Capture the current event loop on the `Agent` instance (needed for cross-thread tool invocation).
-3. Instantiate the wasmtime Component with two imported interfaces:
+2. Capture `asyncio.get_running_loop()` on the `Agent` instance — the agent is **bound to the loop that created it**. Using the agent from a different loop raises `WasmHostError`. (Check at each public call: compare `get_running_loop()` to the captured loop.)
+3. Instantiate the wasmtime Component with these imported interfaces:
    - `host-llm.stream_llm` → wraps the user's `LlmClient`.
    - `host-tools.list_tools` → returns `json.dumps([...])`.
    - `host-tools.execute_tool` → see below.
 4. Guest constructor calls `host-tools.list-tools()`, builds `SdkTool[]` whose `execute()` closure calls back into `host-tools.execute-tool`, and passes them to `createAgentCore({ tools })`.
 
+### Execution model — avoiding deadlock
+
+Wasmtime guest calls are synchronous from WIT's perspective and block the calling thread until they return. If we invoke the component directly on the asyncio event loop and the guest then calls back into `execute-tool` which needs to await a Python coroutine, the loop is blocked inside the guest call and the tool coroutine can never progress → deadlock.
+
+Fix: **all guest calls run in a worker thread via `asyncio.to_thread(...)`**, not directly on the loop. Concretely:
+
+- `await agent.prompt(msg, extra)` is `await asyncio.to_thread(self._component_prompt, msg, extra)`. `_component_prompt` is a plain (non-async) function that calls the wasmtime component and returns an opaque event-stream handle. The event-stream `.next()` calls likewise run via `asyncio.to_thread(...)` so each event pull is offloaded.
+- When the guest calls `host-tools.execute-tool` from inside that worker thread, the Python host implementation of `execute-tool` schedules the registered tool coroutine **back onto the captured main loop** via `asyncio.run_coroutine_threadsafe(tool(args), self._loop).result()` — this blocks the worker thread (safe; it is not the loop) while the loop runs the coroutine (including any async HTTP the tool makes). When the coroutine returns, the worker thread resumes, returns the `ToolResult` to the guest, and the guest resumes its turn.
+
+This pattern is deadlock-free as long as the agent's captured loop is the one currently running when `agent.prompt(...)` is awaited — which is enforced by the loop-binding check in step 2 above.
+
 ### During a turn
 
-1. `await agent.prompt("…", extra_system=<memory block>)` → WIT `prompt()` returns `event-stream`; Python drains it via `async for`.
+1. `await agent.prompt("…", extra_system=<memory block>)` → dispatched to worker thread; wasmtime guest returns an `event-stream`; Python drains it via `async for`, each pull offloaded with `asyncio.to_thread`.
 2. Core decides to invoke a tool → middleware runs the `SdkTool.execute(args, ctx)` closure → closure calls `host-tools.execute-tool({call_id, tool_name, input_json})`.
-3. Python host impl:
+3. Python host impl (running on the worker thread):
    - Looks up the tool by name in the registry.
-   - Parses `input_json`; coerces to tool's typed arg shape.
-   - Schedules the async tool coroutine on the agent's captured loop via `asyncio.run_coroutine_threadsafe(...).result()` (blocks the guest call until done — required because WIT `execute-tool` is sync).
+   - Parses `input_json`; coerces to the tool's typed arg shape.
+   - `asyncio.run_coroutine_threadsafe(tool(args, ctx), self._loop).result()` — blocks the worker thread, runs the tool on the main loop.
    - Success → `ToolResult(call_id, is_error=False, output_json=json.dumps(result))`.
    - Exception → `ToolResult(call_id, is_error=True, output_json=json.dumps({"error": str(exc), "type": type(exc).__name__, "traceback": traceback.format_exc()}))`.
-4. Core emits `tool_call_start` / `tool_call_end` events through the same event stream.
+4. Core emits `tool_execution_start` / `tool_execution_update` / `tool_execution_end` events through the same event stream (names from pi-agent-core's `AgentEvent` union, see §6 Events).
 
 ### Concurrency
 
 - Wasmtime Components are single-threaded per instance; the per-agent `asyncio.Lock` around every guest call enforces this.
-- Separate `Agent` instances own independent wasmtime components and run in parallel without coordination.
+- Separate `Agent` instances own independent wasmtime components and run in parallel without coordination. Each has its own worker-thread dispatch.
+- The agent is bound to its creator loop; using it from another loop raises `WasmHostError`.
 
 ## 8. Build & distribution
 
@@ -341,7 +379,7 @@ class ToolError(FlashAgentError): ...
 
 ### Runtime dependencies
 
-- `wasmtime >= 25.0`
+- `wasmtime >= 25.0` — the `wasmtime-py` package on PyPI, which provides Python bindings to the `wasmtime` runtime. It ships **platform-specific prebuilt wheels** (Linux/macOS x86_64 + arm64, Windows x86_64 — we test only the first two). The flash-agents wheel itself is pure Python; the platform-specific artifact comes from this dependency. On an unsupported platform `pip install flash-agents` fails at the wasmtime-py wheel selection step with a clear error — we do not attempt to wrap that.
 - `aiohttp >= 3.9`
 - `pyyaml >= 6.0`
 
@@ -361,7 +399,7 @@ No Rust, no Node, no Bun needed on user machines. Only Python ≥ 3.11 and wasmt
 
 ### Version coupling
 
-Build script writes `flash_agents.__version__` and the bundled WIT package version from the TS package version, so users can see which core is bundled.
+Build script writes `flash_agents.__version__` and the bundled WIT package version from the TS package version, so users can see which core is bundled. The build also writes a `flash_agents.wasm.CORE_WASM_SHA256` constant — the SHA-256 of `core.wasm` at build time — and `flash_agents.wasm.host` verifies it against the file it loads at runtime. A mismatch (user upgraded TS core but kept an old wheel data file; or package data got corrupted) raises `WasmHostError` at `Agent.create()` time rather than failing silently deep inside a turn.
 
 ## 9. Testing
 
@@ -369,7 +407,7 @@ Build script writes `flash_agents.__version__` and the bundled WIT package versi
 
 - `test_tool_decorator.py` — schema inference per supported arg type; `ConfigError` for unsupported.
 - `test_tool_class.py` — subclass validation; duplicate-name detection.
-- `test_filesystem_memory.py` — round-trip save/load/remove; atomic write behavior; YAML frontmatter parity with Node fixtures.
+- `test_filesystem_memory.py` — round-trip save/load/remove; atomic write behavior; frontmatter parity with Node fixtures (three-line `name`/`description`/`type` block; not full YAML).
 - `test_openai_compat.py` — message translation + SSE parsing against `mock_server.py`.
 - `test_retrieve.py` — scoring heuristic outputs identical to Node `retrieve()` for shared fixtures.
 
@@ -378,8 +416,10 @@ Build script writes `flash_agents.__version__` and the bundled WIT package versi
 - `test_one_turn.py` — adapted from existing stub.
 - `test_multi_turn.py` — two `prompt()` calls preserve message history.
 - `test_tool_call.py` — LLM invokes a `@tool` function; covers success, raising tool, schema-mismatch input.
-- `test_memory_injection.py` — entries from `FilesystemMemoryStore` appear in the `extra-system` block.
+- `test_tool_async_io.py` — explicitly exercises the deadlock-prone path: the registered tool `await`s an `aiohttp` GET against the mock server. Must complete without timeout; if the worker-thread/main-loop bridging is wrong the test hangs.
+- `test_memory_injection.py` — entries from `FilesystemMemoryStore` appear in the `extra-system` block; Node-written fixtures round-trip unchanged.
 - `test_concurrent_agents.py` — two `Agent` instances run concurrently without interference; one agent with two concurrent `prompt()` calls serializes.
+- `test_loop_binding.py` — calling `agent.prompt()` from a different event loop than the one that created the agent raises `WasmHostError`.
 - `test_mcp_registration_warning.py` — `mcp_servers=[...]` emits the "wiring staged" warning once.
 
 ### CI
