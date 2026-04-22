@@ -1,0 +1,54 @@
+package research-computer:flash-agents@0.1.0;
+
+interface host-llm {
+  record llm-request {
+    model-id:      string,
+    provider:      string,
+    api:           string,
+    system-prompt: string,
+    messages-json: string,
+    tools-json:    string,
+    options-json:  string,
+  }
+
+  resource llm-stream {
+    next: func() -> option<string>;
+  }
+
+  stream-llm: func(req: llm-request) -> llm-stream;
+}
+
+interface host-tools {
+  record tool-call {
+    call-id:    string,
+    tool-name:  string,
+    input-json: string,
+  }
+
+  record tool-result {
+    call-id:    string,
+    is-error:   bool,
+    output-json: string,
+  }
+
+  list-tools: func() -> string;
+
+  execute-tool: func(call: tool-call) -> tool-result;
+}
+
+interface agent {
+  resource agent {
+    constructor(config-json: string);
+    prompt: func(message: string, extra-system: option<string>) -> event-stream;
+  }
+
+  resource event-stream {
+    next: func() -> option<string>;
+  }
+}
+
+world flash-agent-core {
+  import host-llm;
+  import host-tools;
+  export agent;
+}
