@@ -1,0 +1,13 @@
+{
+  "schema_version": "1",
+  "trajectory_id": "01J9ZSZABCDEFGHJKMNPQRSTVW",
+  "event_id": "01J9ZSZABCDEFGHJKMNPQRST09",
+  "parent_event_id": null,
+  "event_type": "session_end",
+  "timestamp": "2026-04-17T12:30:05.000Z",
+  "agent_id": "leader",
+  "payload": {
+    "session_id": "01J9ZSZABCDEFGHJKMNPQRSTV0",
+    "reason": "complete"
+  }
+}

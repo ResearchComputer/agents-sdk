@@ -1,0 +1,13 @@
+{
+  "schema_version": "1",
+  "servers": [
+    {
+      "name": "local-fs",
+      "transport": "stdio",
+      "command": "node",
+      "args": ["./my-mcp-server.js"],
+      "env": { "LOG_LEVEL": "info" },
+      "trust_level": "trusted"
+    }
+  ]
+}

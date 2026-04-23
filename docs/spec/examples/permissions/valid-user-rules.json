@@ -1,0 +1,10 @@
+{
+  "schema_version": "1",
+  "source": "user",
+  "rules": [
+    { "target": { "type": "tool", "name": "Bash", "pattern": "git *" }, "behavior": "allow" },
+    { "target": { "type": "capability", "capability": "network:egress" }, "behavior": "deny" },
+    { "target": { "type": "mcp", "server": "internal", "tool": "lookup" }, "behavior": "allow" },
+    { "target": { "type": "all" }, "behavior": "deny" }
+  ]
+}

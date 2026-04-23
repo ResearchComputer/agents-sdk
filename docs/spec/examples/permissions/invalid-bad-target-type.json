@@ -1,0 +1,7 @@
+{
+  "schema_version": "1",
+  "source": "user",
+  "rules": [
+    { "target": { "type": "bogus" }, "behavior": "allow" }
+  ]
+}

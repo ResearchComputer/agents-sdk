@@ -1,0 +1,15 @@
+{
+  "schema_version": "1",
+  "trajectory_id": "01J9ZSZABCDEFGHJKMNPQRSTVW",
+  "event_id": "01J9ZSZABCDEFGHJKMNPQRST08",
+  "parent_event_id": null,
+  "event_type": "compaction",
+  "timestamp": "2026-04-17T12:30:00.000Z",
+  "agent_id": "leader",
+  "payload": {
+    "strategy": "summarize",
+    "before_event_id": "01J9ZSZABCDEFGHJKMNPQRST01",
+    "after_event_id": "01J9ZSZABCDEFGHJKMNPQRST07",
+    "summary": "Early turns compressed; agent was asked to read a file."
+  }
+}

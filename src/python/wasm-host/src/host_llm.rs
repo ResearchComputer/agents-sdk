@@ -15,7 +15,7 @@
 //! * The Python iterator lives in the wasmtime `ResourceTable`, keyed by
 //!   the guest-facing handle, so drops are explicit and deterministic.
 
-use pyo3::exceptions::PyStopAsyncIteration;
+use pyo3::exceptions::{PyAttributeError, PyStopAsyncIteration};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use wasmtime::component::Resource;
@@ -78,10 +78,24 @@ impl HostLlmStreamTrait for State {
     }
 
     async fn drop(&mut self, handle: Resource<LlmStream>) -> wasmtime::Result<()> {
+        let stream = self.table.delete(handle)?;
+
+        let close = Python::attach(|py| -> PyResult<_> {
+            match stream.iterator.call_method0(py, "aclose") {
+                Ok(awaitable) => Ok(Some(pyo3_async_runtimes::tokio::into_future(
+                    awaitable.into_bound(py),
+                )?)),
+                Err(err) if err.is_instance_of::<PyAttributeError>(py) => Ok(None),
+                Err(err) => Err(err),
+            }
+        })?;
+        if let Some(close) = close {
+            let _ = close.await;
+        }
+
         // Releasing the Py<PyAny> requires the GIL; grab one and drop it
         // there. `table.delete` would otherwise drop the iterator on the
         // current thread without the GIL, which panics.
-        let stream = self.table.delete(handle)?;
         Python::attach(|_py| {
             drop(stream);
         });

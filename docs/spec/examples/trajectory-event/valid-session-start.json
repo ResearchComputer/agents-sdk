@@ -1,0 +1,16 @@
+{
+  "schema_version": "1",
+  "trajectory_id": "01J9ZSZABCDEFGHJKMNPQRSTVW",
+  "event_id": "01J9ZSZABCDEFGHJKMNPQRST01",
+  "parent_event_id": null,
+  "event_type": "session_start",
+  "timestamp": "2026-04-17T12:00:00.000Z",
+  "agent_id": "leader",
+  "payload": {
+    "session_id": "01J9ZSZABCDEFGHJKMNPQRSTV0",
+    "model_id": "gpt-4o",
+    "provider_name": "openai",
+    "system_prompt_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "memory_refs": []
+  }
+}

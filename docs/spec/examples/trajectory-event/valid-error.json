@@ -1,0 +1,14 @@
+{
+  "schema_version": "1",
+  "trajectory_id": "01J9ZSZABCDEFGHJKMNPQRSTVW",
+  "event_id": "01J9ZSZABCDEFGHJKMNPQRST10",
+  "parent_event_id": "01J9ZSZABCDEFGHJKMNPQRST04",
+  "event_type": "error",
+  "timestamp": "2026-04-17T12:00:01.260Z",
+  "agent_id": "leader",
+  "payload": {
+    "error_code": "ToolExecutionError",
+    "error_message": "file not found",
+    "stack": "Error: ENOENT..."
+  }
+}

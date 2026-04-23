@@ -1,0 +1,11 @@
+{
+  "schema_version": "1",
+  "session_id": "01J9ZSZ00000000000000SESS1",
+  "trace_id": "trace-abc",
+  "cwd": "/home/user/project",
+  "agent_name": "leader",
+  "strategy": "summarize",
+  "messages_before": 40,
+  "messages_after": 10,
+  "summary": "Compressed early turns about user context."
+}

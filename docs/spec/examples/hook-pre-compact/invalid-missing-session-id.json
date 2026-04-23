@@ -1,0 +1,8 @@
+{
+  "schema_version": "1",
+  "trace_id": "trace-abc",
+  "cwd": "/home/user/project",
+  "agent_name": "leader",
+  "strategy": "summarize",
+  "messages_before": 40
+}

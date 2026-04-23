@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://researchcomputer.com/spec/hook-post-compact.v1.schema.json",
+  "title": "PostCompact hook payload (v1)",
+  "type": "object",
+  "required": ["schema_version", "session_id", "trace_id", "cwd", "agent_name", "strategy", "messages_before", "messages_after"],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "session_id": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+    "trace_id": { "type": "string", "minLength": 1 },
+    "cwd": { "type": "string", "minLength": 1 },
+    "agent_name": { "type": "string", "minLength": 1 },
+    "strategy": { "enum": ["truncate", "summarize"] },
+    "messages_before": { "type": "integer", "minimum": 0 },
+    "messages_after": { "type": "integer", "minimum": 0 },
+    "summary": { "type": "string" }
+  },
+  "additionalProperties": false
+}

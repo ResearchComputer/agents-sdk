@@ -3,7 +3,7 @@ import type {
   AssistantMessageEvent,
   AssistantMessage,
 } from "@mariozechner/pi-ai";
-import { AssistantMessageEventStream } from "@mariozechner/pi-ai";
+import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 
 // The import shape below matches what jco generates for the host-llm
 // interface. Names follow the kebab-to-camel rule jco applies. If the
@@ -53,7 +53,7 @@ export function makeHostLlmClient(host: HostLlmImport): LlmClient {
       //  - push(event) delivers to the agent loop
       //  - The stream finalizes when a "done" or "error" event is pushed
       //  - We never throw from here; transport failures become final events.
-      const stream = new AssistantMessageEventStream();
+      const stream = createAssistantMessageEventStream();
 
       (async () => {
         try {
@@ -65,9 +65,9 @@ export function makeHostLlmClient(host: HostLlmImport): LlmClient {
             if (event.type === "done" || event.type === "error") return;
           }
           // Host exhausted without emitting "done" → synthesize an error end.
-          stream.push(makeErrorDoneEvent(model, "host stream ended without done event"));
+          stream.push(makeErrorEvent(model, "host stream ended without done event"));
         } catch (err) {
-          stream.push(makeErrorDoneEvent(model, err instanceof Error ? err.message : String(err)));
+          stream.push(makeErrorEvent(model, err instanceof Error ? err.message : String(err)));
         }
       })();
 
@@ -79,7 +79,7 @@ export function makeHostLlmClient(host: HostLlmImport): LlmClient {
   };
 }
 
-function makeErrorDoneEvent(model: { id: string; provider: string; api: string }, message: string): AssistantMessageEvent {
+function makeErrorEvent(model: { id: string; provider: string; api: string }, message: string): AssistantMessageEvent {
   const errorMsg: AssistantMessage = {
     role: "assistant",
     content: [{ type: "text", text: "" }],
@@ -94,5 +94,5 @@ function makeErrorDoneEvent(model: { id: string; provider: string; api: string }
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     },
   };
-  return { type: "done", reason: "error", message: errorMsg };
+  return { type: "error", reason: "error", error: errorMsg };
 }

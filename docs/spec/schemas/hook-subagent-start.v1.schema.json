@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://researchcomputer.com/spec/hook-subagent-start.v1.schema.json",
+  "title": "SubagentStart hook payload (v1)",
+  "type": "object",
+  "required": ["schema_version", "session_id", "trace_id", "cwd", "agent_name", "teammate_name", "task_id"],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "session_id": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+    "trace_id": { "type": "string", "minLength": 1 },
+    "cwd": { "type": "string", "minLength": 1 },
+    "agent_name": { "type": "string", "minLength": 1 },
+    "teammate_name": { "type": "string", "minLength": 1 },
+    "task_id": { "type": "string", "minLength": 1 }
+  },
+  "additionalProperties": false
+}

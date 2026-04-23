@@ -1,0 +1,11 @@
+{
+  "schema_version": "1",
+  "id": "01J9ZSZABCDEFGHJKMNPQRSTVW",
+  "last_event_id": "01J9ZSZABCDEFGHJKMNPQRSTVY",
+  "model_id": "gpt-4o",
+  "provider_name": "openai",
+  "system_prompt_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "memory_refs": [],
+  "created_at": "2026-04-17T12:00:00.000Z",
+  "updated_at": "2026-04-17T12:00:00.000Z"
+}

@@ -1,0 +1,15 @@
+{
+  "schema_version": "1",
+  "trajectory_id": "01J9ZSZABCDEFGHJKMNPQRSTVW",
+  "event_id": "01J9ZSZABCDEFGHJKMNPQRST04",
+  "parent_event_id": "01J9ZSZABCDEFGHJKMNPQRST02",
+  "event_type": "tool_call",
+  "timestamp": "2026-04-17T12:00:01.200Z",
+  "agent_id": "leader",
+  "payload": {
+    "tool_name": "Read",
+    "tool_call_id": "toolu_01",
+    "args": { "file_path": "/tmp/x.txt" },
+    "capabilities": ["fs:read"]
+  }
+}

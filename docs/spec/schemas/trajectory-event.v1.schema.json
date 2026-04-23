@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://researchcomputer.com/spec/trajectory-event.v1.schema.json",
+  "title": "Trajectory event (v1)",
+  "description": "One event in an agent trajectory. Stored one per line in a .jsonl file.",
+  "type": "object",
+  "required": ["schema_version", "trajectory_id", "event_id", "parent_event_id", "event_type", "timestamp", "agent_id", "payload"],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "trajectory_id": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+    "event_id": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+    "parent_event_id": {
+      "oneOf": [
+        { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+        { "type": "null" }
+      ]
+    },
+    "event_type": {
+      "enum": [
+        "session_start",
+        "session_end",
+        "llm_api_call",
+        "llm_turn",
+        "agent_message",
+        "tool_call",
+        "tool_result",
+        "hook_fire",
+        "permission_decision",
+        "compaction",
+        "error"
+      ]
+    },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "agent_id": { "type": "string", "pattern": "^(leader|teammate:[a-zA-Z0-9_-]+)$" },
+    "payload": { "type": "object" },
+    "ext": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z0-9_-]+(?:\\.[a-z0-9_-]+)*$" },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": { "required": ["event_type"], "properties": { "event_type": { "const": "session_start" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["session_id", "model_id", "system_prompt_hash", "memory_refs"],
+            "properties": {
+              "session_id": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+              "model_id": { "type": "string", "minLength": 1 },
+              "provider_name": { "type": "string", "minLength": 1 },
+              "system_prompt_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+              "memory_refs": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": { "required": ["event_type"], "properties": { "event_type": { "const": "session_end" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["session_id", "reason"],
+            "properties": {
+              "session_id": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+              "reason": { "enum": ["complete", "budget_exhausted", "aborted", "error"] }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": { "required": ["event_type"], "properties": { "event_type": { "const": "llm_api_call" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["turn_id", "model_id", "provider", "request_messages", "response_message", "usage", "latency_ms"],
+            "properties": {
+              "turn_id": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+              "model_id": { "type": "string", "minLength": 1 },
+              "provider": { "type": "string", "minLength": 1 },
+              "request_messages": { "type": "array" },
+              "response_message": { "type": "object" },
+              "usage": {
+                "type": "object",
+                "required": ["input_tokens", "output_tokens"],
+                "properties": {
+                  "input_tokens": { "type": "integer", "minimum": 0 },
+                  "output_tokens": { "type": "integer", "minimum": 0 },
+                  "cache_read_tokens": { "type": "integer", "minimum": 0 },
+                  "cache_write_tokens": { "type": "integer", "minimum": 0 }
+                },
+                "additionalProperties": false
+              },
+              "latency_ms": { "type": "integer", "minimum": 0 },
+              "stop_reason": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": { "required": ["event_type"], "properties": { "event_type": { "const": "llm_turn" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["turn_id"],
+            "properties": {
+              "turn_id": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+              "summary": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": { "required": ["event_type"], "properties": { "event_type": { "const": "agent_message" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["role", "content"],
+            "properties": {
+              "turn_id": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+              "role": { "enum": ["user", "assistant", "tool", "memory", "summary", "swarmReport"] },
+              "content": {}
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": { "required": ["event_type"], "properties": { "event_type": { "const": "tool_call" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["tool_name", "tool_call_id", "args", "capabilities"],
+            "properties": {
+              "tool_name": { "type": "string", "minLength": 1 },
+              "tool_call_id": { "type": "string", "minLength": 1 },
+              "args": {},
+              "capabilities": {
+                "type": "array",
+                "items": { "enum": ["fs:read", "fs:write", "process:spawn", "network:egress", "git:mutate", "mcp:call"] },
+                "uniqueItems": true
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": { "required": ["event_type"], "properties": { "event_type": { "const": "tool_result" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["tool_call_id", "duration_ms", "success", "output"],
+            "properties": {
+              "tool_call_id": { "type": "string", "minLength": 1 },
+              "duration_ms": { "type": "integer", "minimum": 0 },
+              "success": { "type": "boolean" },
+              "output": {}
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": { "required": ["event_type"], "properties": { "event_type": { "const": "hook_fire" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["hook_event", "payload"],
+            "properties": {
+              "hook_event": { "enum": ["PreToolUse", "PostToolUse", "SessionStart", "SessionEnd", "Stop", "PreCompact", "PostCompact", "SubagentStart", "SubagentStop"] },
+              "matcher": { "type": "string" },
+              "payload": { "type": "object" },
+              "result": { "type": "object" }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": { "required": ["event_type"], "properties": { "event_type": { "const": "permission_decision" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["tool_name", "args", "behavior", "normalized_target"],
+            "properties": {
+              "tool_name": { "type": "string", "minLength": 1 },
+              "args": {},
+              "behavior": { "enum": ["allow", "deny"] },
+              "matched_rule": { "type": "object" },
+              "normalized_target": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": { "required": ["event_type"], "properties": { "event_type": { "const": "compaction" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["strategy", "before_event_id", "after_event_id"],
+            "properties": {
+              "strategy": { "enum": ["truncate", "summarize"] },
+              "before_event_id": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+              "after_event_id": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+              "summary": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": { "required": ["event_type"], "properties": { "event_type": { "const": "error" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["error_code", "error_message"],
+            "properties": {
+              "error_code": { "type": "string", "minLength": 1 },
+              "error_message": { "type": "string" },
+              "stack": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  ]
+}

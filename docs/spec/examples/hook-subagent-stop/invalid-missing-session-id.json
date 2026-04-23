@@ -1,0 +1,9 @@
+{
+  "schema_version": "1",
+  "trace_id": "trace-abc",
+  "cwd": "/home/user/project",
+  "agent_name": "leader",
+  "teammate_name": "code-reviewer",
+  "task_id": "task-42",
+  "termination_reason": "taskComplete"
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://researchcomputer.com/spec/memory.v1.schema.json",
+  "title": "Memory frontmatter (v1)",
+  "description": "YAML frontmatter shape for a memory file. Body is free Markdown and is not constrained by this schema.",
+  "type": "object",
+  "required": ["schema_version", "name", "description", "type"],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string", "minLength": 1 },
+    "type": { "enum": ["user", "feedback", "project", "reference"] },
+    "ext": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z0-9_-]+(?:\\.[a-z0-9_-]+)*$" },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

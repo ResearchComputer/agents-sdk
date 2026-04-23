@@ -18,25 +18,36 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import traceback
 from typing import Any, AsyncIterator, Awaitable, Callable, Protocol
 
 from flash_agents.errors import ConfigError, WasmHostError
 from flash_agents.wasm.host import wasm_path
 
 
-try:
-    import flash_agents_wasm as _wasm_ext
-except ModuleNotFoundError as err:
-    if err.name == "flash_agents_wasm":
-        raise ModuleNotFoundError(
-            "flash_agents_wasm native extension not found. Build it first:\n"
-            "    cd src/python/wasm-host && maturin develop --release"
-        ) from err
-    raise
+def _load_wasm_ext() -> Any:
+    try:
+        import flash_agents_wasm as wasm_ext
+    except ModuleNotFoundError as err:
+        if err.name == "flash_agents_wasm":
+            raise ModuleNotFoundError(
+                "flash_agents_wasm native extension not found. Build it first:\n"
+                "    cd src/python/wasm-host && maturin develop --release"
+            ) from err
+        raise
+    return wasm_ext
 
 
 _TOOL_LOGGER = logging.getLogger("flash_agents.tools")
+
+
+async def _await_wasm(awaitable: Any) -> Any:
+    # pyo3-async-runtimes 0.28 can strand immediately awaited futures in this
+    # embedding path. Let the loop process the scheduled result callback first.
+    if hasattr(awaitable, "done") and hasattr(awaitable, "result"):
+        while not awaitable.done():
+            await asyncio.sleep(0.001)
+        return awaitable.result()
+    return await awaitable
 
 
 class LlmClient(Protocol):
@@ -181,13 +192,13 @@ class Agent:
             try:
                 result = await rec.execute(args, ctx)
             except Exception as exc:  # noqa: BLE001 — tool boundary swallows all
+                _TOOL_LOGGER.exception("tool %s failed during call %s", toolName, callId)
                 return {
                     "callId": callId,
                     "isError": True,
                     "outputJson": json.dumps({
                         "error": str(exc),
                         "type": type(exc).__name__,
-                        "traceback": traceback.format_exc(),
                     }),
                 }
             return {
@@ -202,13 +213,14 @@ class Agent:
             "cwd": effective_cwd,
         })
         try:
-            inner = await _wasm_ext.Agent.create(
+            wasm_ext = _load_wasm_ext()
+            inner = await _await_wasm(wasm_ext.Agent.create(
                 wasm_path=wasm_path(),
                 llm_stream_factory=_llm_stream_factory,
                 list_tools_callback=_list_tools_callback,
                 execute_tool_callback=_execute_tool_callback,
                 config_json=config_json,
-            )
+            ))
         except RuntimeError as err:
             raise WasmHostError(str(err)) from err
         return cls(
@@ -245,18 +257,18 @@ class Agent:
             async with self._call_lock:
                 extra_system = await _compose_memory_block(memory, message, memory_top_k)
                 try:
-                    stream = await self._inner.prompt(message, extra_system)
+                    stream = await _await_wasm(self._inner.prompt(message, extra_system))
                 except RuntimeError as err:
                     raise WasmHostError(str(err)) from err
                 try:
                     while True:
-                        raw = await stream.next()
+                        raw = await _await_wasm(stream.next())
                         if raw is None:
                             return
                         yield json.loads(raw)
                 finally:
                     try:
-                        await stream.close()
+                        await _await_wasm(stream.close())
                     except RuntimeError:
                         pass
 
@@ -267,7 +279,7 @@ class Agent:
             return
         self._disposed = True
         try:
-            await self._inner.dispose()
+            await _await_wasm(self._inner.dispose())
         except RuntimeError:
             # Already disposed; swallow.
             pass

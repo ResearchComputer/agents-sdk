@@ -1,0 +1,15 @@
+{
+  "schema_version": "1",
+  "name": "Read",
+  "description": "Read a file from disk.",
+  "input_schema": {
+    "type": "object",
+    "required": ["file_path"],
+    "properties": {
+      "file_path": { "type": "string" },
+      "limit": { "type": "integer", "minimum": 1 }
+    },
+    "additionalProperties": false
+  },
+  "x-capabilities": ["fs:read"]
+}

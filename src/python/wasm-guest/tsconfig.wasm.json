@@ -2,13 +2,11 @@
   "extends": "../../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "../flash_agents/wasm/ts-out",
-    "rootDir": ".",
+    "rootDir": "../..",
     "composite": false,
     "declaration": false,
+    "declarationMap": false,
     "sourceMap": false
   },
-  "include": ["entrypoint.ts"],
-  "references": [
-    { "path": "../../../tsconfig.core.json" }
-  ]
+  "include": ["*.ts", "*.d.ts"]
 }

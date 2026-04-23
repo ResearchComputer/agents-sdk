@@ -1,0 +1,15 @@
+{
+  "schema_version": "1",
+  "trajectory_id": "01J9ZSZABCDEFGHJKMNPQRSTVW",
+  "event_id": "01J9ZSZABCDEFGHJKMNPQRST06",
+  "parent_event_id": "01J9ZSZABCDEFGHJKMNPQRST02",
+  "event_type": "permission_decision",
+  "timestamp": "2026-04-17T12:00:01.210Z",
+  "agent_id": "leader",
+  "payload": {
+    "tool_name": "Read",
+    "args": { "file_path": "/tmp/x.txt" },
+    "behavior": "allow",
+    "normalized_target": "tool:Read"
+  }
+}

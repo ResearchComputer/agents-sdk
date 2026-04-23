@@ -77,7 +77,7 @@ async def test_tool_call_success(two_turn_mock: tuple[str, list[dict]]) -> None:
 
 
 @pytest.mark.asyncio
-async def test_tool_call_raises_and_reports_traceback(
+async def test_tool_call_raises_and_reports_sanitized_error(
     two_turn_mock: tuple[str, list[dict]],
 ) -> None:
     base_url, recorded = two_turn_mock
@@ -105,4 +105,4 @@ async def test_tool_call_raises_and_reports_traceback(
     content = turn2_tool_msgs[0]["content"]
     assert "ValueError" in content
     assert "boom" in content
-    assert "Traceback" in content
+    assert "Traceback" not in content

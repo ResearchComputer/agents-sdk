@@ -1,0 +1,5 @@
+{
+  "schema_version": "1",
+  "name": "Read",
+  "input_schema": { "type": "object" }
+}

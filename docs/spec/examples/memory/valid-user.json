@@ -1,0 +1,6 @@
+{
+  "schema_version": "1",
+  "name": "user-role",
+  "description": "User's role and primary responsibilities",
+  "type": "user"
+}

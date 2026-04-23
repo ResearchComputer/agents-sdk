@@ -18,6 +18,7 @@ class _NoopLlm:
 
 @pytest.mark.asyncio
 async def test_mcp_servers_emit_warning() -> None:
+    pytest.importorskip("flash_agents_wasm")
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         agent = await Agent.create(

@@ -1,0 +1,15 @@
+{
+  "schema_version": "1",
+  "trajectory_id": "01J9ZSZABCDEFGHJKMNPQRSTVW",
+  "event_id": "01J9ZSZABCDEFGHJKMNPQRST07",
+  "parent_event_id": "01J9ZSZABCDEFGHJKMNPQRST02",
+  "event_type": "hook_fire",
+  "timestamp": "2026-04-17T12:00:01.215Z",
+  "agent_id": "leader",
+  "payload": {
+    "hook_event": "PreToolUse",
+    "matcher": "Read",
+    "payload": { "tool_name": "Read" },
+    "result": {}
+  }
+}

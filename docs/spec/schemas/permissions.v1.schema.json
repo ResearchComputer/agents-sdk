@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://researchcomputer.com/spec/permissions.v1.schema.json",
+  "title": "Permission rule file (v1)",
+  "type": "object",
+  "required": ["schema_version", "source", "rules"],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "source": { "enum": ["user", "project", "session"] },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["target", "behavior"],
+        "properties": {
+          "target": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["type", "name"],
+                "properties": {
+                  "type": { "const": "tool" },
+                  "name": { "type": "string", "minLength": 1 },
+                  "pattern": { "type": "string" }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["type", "capability"],
+                "properties": {
+                  "type": { "const": "capability" },
+                  "capability": { "enum": ["fs:read", "fs:write", "process:spawn", "network:egress", "git:mutate", "mcp:call"] }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["type", "server"],
+                "properties": {
+                  "type": { "const": "mcp" },
+                  "server": { "type": "string", "minLength": 1 },
+                  "tool": { "type": "string" }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["type"],
+                "properties": { "type": { "const": "all" } },
+                "additionalProperties": false
+              }
+            ]
+          },
+          "behavior": { "enum": ["allow", "deny"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "ext": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z0-9_-]+(?:\\.[a-z0-9_-]+)*$" },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

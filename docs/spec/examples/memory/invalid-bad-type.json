@@ -1,0 +1,6 @@
+{
+  "schema_version": "1",
+  "name": "x",
+  "description": "y",
+  "type": "not-a-real-type"
+}

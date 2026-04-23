@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://researchcomputer.com/spec/hook-result.v1.schema.json",
+  "title": "Hook result (v1)",
+  "type": "object",
+  "required": ["schema_version"],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "updated_args": {},
+    "updated_result": {}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": "1",
+  "trajectory_id": "01J9ZSZABCDEFGHJKMNPQRSTVW",
+  "event_id": "01J9ZSZABCDEFGHJKMNPQRST02",
+  "parent_event_id": "01J9ZSZABCDEFGHJKMNPQRST01",
+  "event_type": "llm_api_call",
+  "timestamp": "2026-04-17T12:00:01.000Z",
+  "agent_id": "leader",
+  "payload": {
+    "turn_id": "01J9ZSZABCDEFGHJKMNPQRSTN1",
+    "model_id": "gpt-4o",
+    "provider": "openai",
+    "request_messages": [{ "role": "user", "content": "hello" }],
+    "response_message": { "role": "assistant", "content": "hi" },
+    "usage": { "input_tokens": 5, "output_tokens": 2 },
+    "latency_ms": 480,
+    "stop_reason": "end_turn"
+  }
+}

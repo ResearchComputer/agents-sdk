@@ -1,7 +1,7 @@
 import {
-  createAgentCore,
   type AgentCoreConfig,
-} from "../../core/index.js";
+  createAgentCore,
+} from "../../core/factory.js";
 import type { Model } from "@researchcomputer/ai-provider";
 import { makeStubAdapters, makeHostTools } from "./adapters.js";
 import { makeHostLlmClient } from "./llm-bridge.js";

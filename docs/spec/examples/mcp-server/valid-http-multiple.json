@@ -1,0 +1,7 @@
+{
+  "schema_version": "1",
+  "servers": [
+    { "name": "cloud-a", "transport": "http", "url": "https://example.com/mcp", "trust_level": "untrusted" },
+    { "name": "cloud-b", "transport": "sse", "url": "https://example.com/mcp/sse", "headers": { "x-api-key": "..." } }
+  ]
+}
