@@ -29,6 +29,8 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
+          # Cargo.toml is under src/python/wasm-host/, not at the repo root.
+          cache-workspaces: "src/python/wasm-host -> target"
 
       - uses: actions/setup-python@v5
         with:
@@ -39,6 +41,15 @@ jobs:
 
       - name: Build core.wasm
         run: bun run build:wasm:python
+
+      - name: Create Python venv
+        # maturin develop refuses a bare system Python; provide a venv and
+        # export it so subsequent steps (pip install, pytest) share it.
+        shell: bash
+        run: |
+          python -m venv .venv
+          echo "VIRTUAL_ENV=$GITHUB_WORKSPACE/.venv" >> "$GITHUB_ENV"
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Install flash_agents_wasm Rust host
         working-directory: src/python/wasm-host
