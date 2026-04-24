@@ -80,6 +80,32 @@ def test_unsupported_type_raises_configerror() -> None:
             """no schema possible."""
 
 
+def test_multi_arm_union_emits_anyOf() -> None:
+    @tool
+    async def numeric_or_text(x: int | str) -> str:
+        """accepts an int or a string."""
+        return str(x)
+
+    schema = numeric_or_text.canonical.input_schema
+    prop = schema["properties"]["x"]
+    assert "anyOf" in prop
+    types = sorted(s["type"] for s in prop["anyOf"])
+    assert types == ["integer", "string"]
+
+
+def test_nullable_multi_arm_union_includes_null_branch() -> None:
+    @tool
+    async def maybe_int_or_str(x: int | str | None) -> str:
+        """accepts an int, a string, or None."""
+        return str(x)
+
+    schema = maybe_int_or_str.canonical.input_schema
+    prop = schema["properties"]["x"]
+    assert "anyOf" in prop
+    types = sorted(s["type"] for s in prop["anyOf"])
+    assert types == ["integer", "null", "string"]
+
+
 def test_tool_class_form() -> None:
     class WebFetch(Tool):
         name = "web_fetch"

@@ -8,7 +8,6 @@ use tokio::sync::Mutex;
 use wasmtime::component::{Component, HasSelf, Linker, ResourceAny, ResourceTable};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::WasiCtxBuilder;
-use wasmtime_wasi_http::WasiHttpCtx;
 
 use crate::bindings::FlashAgentCore;
 use crate::state::State;
@@ -169,19 +168,19 @@ async fn build_core(
 
     let mut linker: Linker<State> = Linker::new(&engine);
     wasmtime_wasi::p2::add_to_linker_async(&mut linker).context("add wasi to linker")?;
-    wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)
-        .context("add wasi-http to linker")?;
+    // wasmtime_wasi_http intentionally NOT added: core.wasm is built with
+    // --disable http --disable fetch-event so no guest import references it.
+    // Keeping it in the linker pulled ~15MB of hyper/rustls surface into
+    // the Rust extension for zero benefit.
     FlashAgentCore::add_to_linker::<_, HasSelf<_>>(&mut linker, |state: &mut State| state)
         .context("add host imports to linker")?;
 
     let state = State {
         wasi: WasiCtxBuilder::new().inherit_stdio().build(),
-        http: WasiHttpCtx::new(),
         table: ResourceTable::new(),
         stream_llm_factory,
         list_tools_callback,
         execute_tool_callback,
-        http_hooks: [],
     };
     let mut store = Store::new(&engine, state);
 

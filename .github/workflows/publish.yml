@@ -31,13 +31,26 @@ jobs:
       - run: npm publish --provenance --access public
 
   python-wasm-wheels:
-    runs-on: ubuntu-latest
+    # Build native wheels across Linux (x86_64, aarch64) + macOS
+    # (x86_64, arm64). macOS targets use native runners; Linux targets
+    # use zig for manylinux compat.
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - x86_64-unknown-linux-gnu
-          - aarch64-unknown-linux-gnu
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            use_zig: true
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            use_zig: true
+          - os: macos-13
+            target: x86_64-apple-darwin
+            use_zig: false
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            use_zig: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -49,7 +62,8 @@ jobs:
           python-version: "3.11"
       - name: Install Python build tooling
         run: python -m pip install --upgrade pip "maturin[zig]"
-      - name: Build native WASM host wheel
+      - name: Build native WASM host wheel (Linux with zig)
+        if: matrix.use_zig
         run: |
           python -m maturin build \
             --manifest-path src/python/wasm-host/Cargo.toml \
@@ -57,6 +71,14 @@ jobs:
             --target ${{ matrix.target }} \
             --zig \
             --compatibility manylinux2014 \
+            --out python-dist
+      - name: Build native WASM host wheel (macOS native)
+        if: ${{ !matrix.use_zig }}
+        run: |
+          python -m maturin build \
+            --manifest-path src/python/wasm-host/Cargo.toml \
+            --release \
+            --target ${{ matrix.target }} \
             --out python-dist
       - name: Upload native WASM host wheel
         uses: actions/upload-artifact@v4

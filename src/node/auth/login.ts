@@ -15,12 +15,49 @@ function llmProxyUrl(): string {
   return url.replace(/\/$/, '');
 }
 
+/** Maximum JWT lifetime we'll accept from the exchange endpoint. Anything
+ *  longer than this is either a misconfigured issuer or a hostile one —
+ *  refuse to persist it. 31 days matches Stytch's typical session length. */
+const MAX_JWT_LIFETIME_MS = 31 * 24 * 60 * 60 * 1000;
+
+/**
+ * Decode a JWT payload WITHOUT verifying the signature. We use this as a
+ * sanity check on the shape of the token the proxy hands us; signature
+ * verification would require a pinned JWKS we don't currently ship.
+ *
+ * Returns null on malformed input.
+ */
+function decodeJwtPayload(jwt: string): { exp?: number; iat?: number; [k: string]: unknown } | null {
+  const parts = jwt.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    // base64url → base64 → JSON
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4));
+    const json = Buffer.from(b64 + pad, 'base64').toString('utf-8');
+    const parsed = JSON.parse(json);
+    return typeof parsed === 'object' && parsed !== null ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function exchangeToken(token: string, tokenType: string): Promise<Session> {
   if (!SUPPORTED_TOKEN_TYPES.has(tokenType)) {
     throw new SdkError(`Unsupported token type: ${tokenType}`, 'UNSUPPORTED_TOKEN_TYPE', false);
   }
 
   const baseUrl = llmProxyUrl();
+  // Warn if the proxy URL is being overridden from the env var — a common
+  // misconfiguration / attack vector. The value is developer-visible in
+  // the server logs, not LLM-supplied, so logging it is fine.
+  if (process.env.RC_LLM_PROXY_URL && !/^https:\/\/(llm|api)\.research\.computer/.test(baseUrl)) {
+    console.warn(
+      `[auth] RC_LLM_PROXY_URL points at a non-default endpoint (${baseUrl}). ` +
+      'Verify this is intentional — the session JWT is persisted under this trust.',
+    );
+  }
+
   const res = await fetch(`${baseUrl}/auth/stytch/exchange`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -37,6 +74,36 @@ export async function exchangeToken(token: string, tokenType: string): Promise<S
     jwtExpiresAt: number;
     email:        string;
   };
+
+  // Shape check before persisting. A compromised proxy could return a
+  // session with an arbitrary expiry — reject anything outside a sane
+  // window so the damage from a misconfigured RC_LLM_PROXY_URL is bounded.
+  if (typeof data.sessionJwt !== 'string' || !data.sessionJwt) {
+    throw new SdkError('Exchange returned no sessionJwt', 'AUTH_EXCHANGE_INVALID', false);
+  }
+  if (typeof data.jwtExpiresAt !== 'number' || !Number.isFinite(data.jwtExpiresAt)) {
+    throw new SdkError('Exchange returned invalid jwtExpiresAt', 'AUTH_EXCHANGE_INVALID', false);
+  }
+
+  // JWT payload must decode and its `exp` (if present) must agree with
+  // the outer `jwtExpiresAt`. Without signature verification this isn't
+  // a cryptographic guarantee, but it catches garbage / format drift.
+  const payload = decodeJwtPayload(data.sessionJwt);
+  if (!payload) {
+    throw new SdkError('sessionJwt is not a well-formed JWT', 'AUTH_EXCHANGE_INVALID', false);
+  }
+  const nowMs = Date.now();
+  const expMs = data.jwtExpiresAt;
+  if (expMs <= nowMs) {
+    throw new SdkError('Exchange returned an already-expired session', 'AUTH_EXCHANGE_EXPIRED', false);
+  }
+  if (expMs > nowMs + MAX_JWT_LIFETIME_MS) {
+    throw new SdkError(
+      `Exchange returned a session with implausible expiry (>${MAX_JWT_LIFETIME_MS / 86400000}d)`,
+      'AUTH_EXCHANGE_INVALID',
+      false,
+    );
+  }
 
   const session: Session = {
     sessionJwt:   data.sessionJwt,

@@ -63,10 +63,14 @@ def type_to_schema(tp: Any, path: str) -> dict:
                 elif "null" not in t:
                     inner["type"] = list(t) + ["null"]
             return inner
-        raise ConfigError(
-            f"unsupported type at {path}: Union with multiple non-None arms. "
-            f"Use a Tool subclass with an explicit input_schema."
-        )
+        # Multi-arm union: emit `anyOf`. Common case: int | str.
+        # Include a {"type": "null"} branch when None is also a valid arm
+        # so the schema validator accepts nullable multi-arm unions.
+        schemas = [type_to_schema(a, f"{path}[{i}]") for i, a in enumerate(non_none)]
+        result: dict = {"anyOf": schemas}
+        if nullable:
+            result["anyOf"] = [*schemas, {"type": "null"}]
+        return result
     if origin is typing.Literal:
         return {"enum": list(args)}
     if _is_typeddict(tp):

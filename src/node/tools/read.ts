@@ -1,8 +1,9 @@
 import { Type } from '@sinclair/typebox';
 import fs from 'node:fs/promises';
+import fsConstants from 'node:fs';
 import type { SdkTool, ToolOptions } from '../../core/types.js';
-import { ToolExecutionError } from '../../core/errors.js';
 import { resolvePath, isRealPathAllowed } from './util.js';
+import { safePathError, safeToolError } from '../security/index.js';
 
 const ReadParams = Type.Object({
   file_path: Type.String(),
@@ -24,14 +25,32 @@ export function createReadTool(options?: ToolOptions): SdkTool<typeof ReadParams
       const absPath = resolvePath(params.file_path, cwd);
 
       if (!(await isRealPathAllowed(absPath, cwd, allowedRoots))) {
-        throw new ToolExecutionError(`Path not allowed: ${params.file_path}`);
+        throw safePathError('read');
       }
 
+      // Open with O_NOFOLLOW on Linux/macOS so a symlink swap between
+      // the isRealPathAllowed check and the open (a real TOCTOU window
+      // because the check resolves via fs.realpath and the read
+      // reopens by string) cannot escape the sandbox. If the final path
+      // component became a symlink after the check, open() fails with
+      // ELOOP which safeToolError maps to permission_denied.
+      // Windows has no O_NOFOLLOW; fall back to plain readFile there.
       let content: string;
       try {
-        content = await fs.readFile(absPath, 'utf-8');
-      } catch (err: any) {
-        throw new ToolExecutionError(`Failed to read file: ${err.message}`);
+        if (process.platform === 'win32') {
+          content = await fs.readFile(absPath, 'utf-8');
+        } else {
+          const flags = fsConstants.constants.O_RDONLY | fsConstants.constants.O_NOFOLLOW;
+          const handle = await fs.open(absPath, flags);
+          try {
+            const buf = await handle.readFile();
+            content = buf.toString('utf-8');
+          } finally {
+            await handle.close();
+          }
+        }
+      } catch (err) {
+        throw safeToolError(err, 'io_error');
       }
 
       let lines = content.split('\n');

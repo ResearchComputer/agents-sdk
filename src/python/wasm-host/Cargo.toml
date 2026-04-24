@@ -15,7 +15,9 @@ crate-type = ["cdylib"]
 [dependencies]
 wasmtime = { version = "43", features = ["component-model", "async"] }
 wasmtime-wasi = "43"
-wasmtime-wasi-http = "43"
+# wasmtime-wasi-http was previously pulled in even though core.wasm is
+# componentized with --disable http --disable fetch-event. Dead import
+# surface + large dependency footprint (hyper, rustls). Drop it.
 pyo3 = { version = "0.28", features = ["extension-module", "abi3-py311"] }
 pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }

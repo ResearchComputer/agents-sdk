@@ -65,10 +65,31 @@ describe('createReadTool', () => {
       .rejects.toThrow();
   });
 
-  it('throws for path outside cwd', async () => {
+  it('throws path_not_allowed for path outside cwd', async () => {
     const tool = createReadTool({ cwd: tmpDir });
     await expect(tool.execute('call1', { file_path: '/etc/passwd' }))
-      .rejects.toThrow(/not allowed/i);
+      .rejects.toThrow(/path_not_allowed/i);
+  });
+
+  it('refuses to follow a symlink whose target is outside the sandbox (O_NOFOLLOW)', async () => {
+    // Symlink final component pointing OUTSIDE the sandbox. isRealPathAllowed
+    // resolves the symlink target and rejects; we verify that code path. The
+    // O_NOFOLLOW protection kicks in only when isRealPathAllowed can be
+    // bypassed by a concurrent symlink swap, which is hard to reliably
+    // reproduce in a test.
+    if (process.platform === 'win32') return;
+    const outside = path.join(os.tmpdir(), 'read-outside-' + Date.now());
+    fs.writeFileSync(outside, 'SECRET');
+    try {
+      const linkPath = path.join(tmpDir, 'leak');
+      fs.symlinkSync(outside, linkPath);
+      const tool = createReadTool({ cwd: tmpDir });
+      await expect(tool.execute('call1', { file_path: linkPath })).rejects.toThrow(
+        /path_not_allowed|permission_denied/,
+      );
+    } finally {
+      fs.unlinkSync(outside);
+    }
   });
 
   it('resolves relative paths against cwd', async () => {
