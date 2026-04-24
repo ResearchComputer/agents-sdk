@@ -107,6 +107,10 @@ jobs:
           set -eux
           python -m pip install --upgrade build
           python -m build --wheel --outdir dist
+          # flash-agents depends on flash-agents-wasm (Rust extension). That
+          # wheel isn't on PyPI yet, so build it locally and hand pip both
+          # via --find-links so the smoke install can resolve the dep.
+          (cd wasm-host && maturin build --release --out ../dist)
           python -m venv /tmp/smoke-venv
-          /tmp/smoke-venv/bin/pip install dist/*.whl
+          /tmp/smoke-venv/bin/pip install --find-links=dist dist/flash_agents-*.whl
           /tmp/smoke-venv/bin/python -c "from flash_agents.wasm.host import wasm_path; print('wheel OK', wasm_path())"

@@ -33,7 +33,7 @@ impl Host for State {
         })?;
         let py_result = fut.await?;
         let (call_id, is_error, output_json) = Python::attach(|py| -> PyResult<_> {
-            let d = py_result.bind(py).downcast::<PyDict>()?;
+            let d = py_result.bind(py).cast::<PyDict>()?;
             let call_id: String = d
                 .get_item("callId")?
                 .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("missing callId"))?
