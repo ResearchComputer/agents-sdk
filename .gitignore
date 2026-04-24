@@ -2,6 +2,7 @@ node_modules/
 dist/
 coverage/
 *.tsbuildinfo
+*.tgz
 .codex
 .rc-agent-cli/
 .rc-agent-cli-logs/
