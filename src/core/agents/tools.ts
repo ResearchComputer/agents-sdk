@@ -14,7 +14,7 @@ export function createSwarmTools(teamName: string, swarm: SwarmManager): SdkTool
       prompt: Type.String({ description: 'Task prompt for the teammate' }),
       systemPrompt: Type.Optional(Type.String({ description: 'Optional system prompt override' })),
     }),
-    capabilities: [],
+    capabilities: ['swarm:mutate'],
     async execute(_toolCallId, params) {
       const teammate = await swarm.spawnTeammate(teamName, {
         name: params.name,
@@ -38,7 +38,7 @@ export function createSwarmTools(teamName: string, swarm: SwarmManager): SdkTool
       to: Type.String({ description: 'Name of the recipient teammate' }),
       message: Type.String({ description: 'Message content to send' }),
     }),
-    capabilities: [],
+    capabilities: ['swarm:mutate'],
     async execute(_toolCallId, params) {
       const agentMessage = {
         role: 'user' as const,
@@ -60,7 +60,7 @@ export function createSwarmTools(teamName: string, swarm: SwarmManager): SdkTool
     parameters: Type.Object({
       name: Type.String({ description: 'Name of the teammate to dismiss' }),
     }),
-    capabilities: [],
+    capabilities: ['swarm:mutate'],
     async execute(_toolCallId, params) {
       await swarm.removeTeammate(teamName, params.name);
       return {

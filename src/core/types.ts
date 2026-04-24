@@ -3,7 +3,15 @@ import type { ImageContent, Model, TextContent, Usage } from '@researchcomputer/
 import type { Static, TSchema } from '@sinclair/typebox';
 
 // Capabilities
-export type Capability = 'fs:read' | 'fs:write' | 'process:spawn' | 'network:egress' | 'git:mutate' | 'mcp:call';
+export type Capability =
+  | 'fs:read'
+  | 'fs:write'
+  | 'process:spawn'
+  | 'network:egress'
+  | 'git:mutate'
+  | 'mcp:call'
+  /** Mutation on the swarm (spawn/dismiss teammates, send messages). */
+  | 'swarm:mutate';
 
 // SdkTool
 export interface SdkTool<TParameters extends TSchema = TSchema, TDetails = any> extends AgentTool<TParameters, TDetails> {

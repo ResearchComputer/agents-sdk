@@ -1,13 +1,23 @@
 import type { PermissionRule, PermissionResult, PermissionMode, Capability } from '../types.js';
+import { BoundedMap } from '../util/bounded-map.js';
 
-const MUTATION_CAPABILITIES: Capability[] = ['fs:write', 'process:spawn', 'network:egress', 'git:mutate', 'mcp:call'];
+const MUTATION_CAPABILITIES: Capability[] = [
+  'fs:write',
+  'process:spawn',
+  'network:egress',
+  'git:mutate',
+  'mcp:call',
+  'swarm:mutate',
+];
 
 const SOURCE_PRIORITY: Record<string, number> = { user: 3, project: 2, session: 1 };
 
 // Compiled glob cache keyed by the raw pattern. Rule lists are stable across
 // a session but the hot path evaluates them on every tool call, so we avoid
-// rebuilding the same regex per invocation.
-const globRegexCache = new Map<string, RegExp | null>();
+// rebuilding the same regex per invocation. Bounded so a long-running host
+// embedding the SDK with per-request rule patterns cannot grow the cache
+// unbounded. 1000 distinct patterns is well above any realistic session.
+const globRegexCache = new BoundedMap<string, RegExp | null>(1000);
 
 function compileGlob(pattern: string): RegExp | null {
   if (pattern === '*' || !pattern.includes('*')) return null;
@@ -109,6 +119,19 @@ export function findMatchingRule(
     const score = getSpecificity(rule) * 10 + (SOURCE_PRIORITY[rule.source] ?? 0);
     if (score > bestScore) {
       bestScore = score;
+      bestRule = rule;
+    } else if (
+      score === bestScore &&
+      rule.behavior === 'deny' &&
+      bestRule &&
+      bestRule.behavior === 'allow'
+    ) {
+      // Tiebreaker: at equal combined score, deny beats allow. Without this,
+      // first-seen wins — and skill-contributed rules are concatenated
+      // before user rules in composeAgentConfig, so a skill `allow` would
+      // silently override a user `deny` (or vice versa) at the same
+      // specificity + source_priority. Making deny the deterministic winner
+      // matches the "fail closed" convention for security primitives.
       bestRule = rule;
     }
   }

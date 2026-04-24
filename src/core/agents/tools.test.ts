@@ -28,7 +28,7 @@ describe('createSwarmTools', () => {
     const spawn = tools.find(t => t.name === 'SpawnTeammate');
     expect(spawn).toBeDefined();
     expect(spawn!.description).toContain('Spawn');
-    expect(spawn!.capabilities).toEqual([]);
+    expect(spawn!.capabilities).toEqual(['swarm:mutate']);
   });
 
   it('has SendMessage tool', () => {

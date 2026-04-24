@@ -2,6 +2,7 @@ import type { TSchema } from '@sinclair/typebox';
 import type { SdkTool } from '../types.js';
 import { jsonSchemaToTypeBox } from './schema-convert.js';
 import { McpConnectionError } from '../errors.js';
+import { BoundedMap } from '../util/bounded-map.js';
 
 export interface McpToolDefinition {
   name: string;
@@ -35,8 +36,10 @@ export function assertValidMcpServerName(name: string): void {
 // Caches jsonSchemaToTypeBox output keyed by the raw schema JSON. MCP tool
 // schemas are static per-connection and reconnecting (or listing the same
 // server from another host) re-enters this code path — re-parsing the same
-// schema per tool is pure waste.
-const schemaCache = new Map<string, TSchema>();
+// schema per tool is pure waste. Bounded so a pathological MCP server
+// exposing many distinct schemas (or many reconnects with schema drift)
+// cannot grow the cache unbounded across a long-running host process.
+const schemaCache = new BoundedMap<string, TSchema>(1000);
 
 function convertSchemaCached(inputSchema: Record<string, any>): TSchema {
   const key = JSON.stringify(inputSchema ?? {});

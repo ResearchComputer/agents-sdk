@@ -166,6 +166,37 @@ describe('findMatchingRule', () => {
     const result = findMatchingRule(rules, 'ReadFile', {}, []);
     expect(result!.behavior).toBe('allow');
   });
+
+  it('at equal score, deny beats allow regardless of array order (allow-first)', () => {
+    // Two rules, same target, same source → same combined score. Without the
+    // tiebreaker, first-seen wins and the allow would override the deny.
+    const rules: PermissionRule[] = [
+      { target: { type: 'tool', name: 'Bash' }, behavior: 'allow', source: 'user' },
+      { target: { type: 'tool', name: 'Bash' }, behavior: 'deny', source: 'user' },
+    ];
+    const result = findMatchingRule(rules, 'Bash', {}, []);
+    expect(result!.behavior).toBe('deny');
+  });
+
+  it('at equal score, deny beats allow regardless of array order (deny-first)', () => {
+    const rules: PermissionRule[] = [
+      { target: { type: 'tool', name: 'Bash' }, behavior: 'deny', source: 'user' },
+      { target: { type: 'tool', name: 'Bash' }, behavior: 'allow', source: 'user' },
+    ];
+    const result = findMatchingRule(rules, 'Bash', {}, []);
+    expect(result!.behavior).toBe('deny');
+  });
+
+  it('higher source_priority still wins over lower source even when deny vs allow', () => {
+    // user allow (score 53) vs project deny (score 52) → allow wins
+    // because higher combined score beats the tiebreaker.
+    const rules: PermissionRule[] = [
+      { target: { type: 'tool', name: 'Bash' }, behavior: 'deny', source: 'project' },
+      { target: { type: 'tool', name: 'Bash' }, behavior: 'allow', source: 'user' },
+    ];
+    const result = findMatchingRule(rules, 'Bash', {}, []);
+    expect(result!.behavior).toBe('allow');
+  });
 });
 
 describe('evaluatePermission', () => {
