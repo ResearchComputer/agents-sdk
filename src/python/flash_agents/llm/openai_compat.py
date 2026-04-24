@@ -97,10 +97,16 @@ class _OpenAiCompatStream:
             raise
         except aiohttp.ClientError as err:
             await self.aclose()
-            return json.dumps(self._decoder.make_error_event(f"connect error: {err}"))
+            event = self._decoder.make_error_event(f"connect error: {err}")
+            if event is not None:
+                return json.dumps(event)
+            raise StopAsyncIteration
         except Exception as err:  # noqa: BLE001 - contract: never raise
             await self.aclose()
-            return json.dumps(self._decoder.make_error_event(f"unexpected error: {err}"))
+            event = self._decoder.make_error_event(f"unexpected error: {err}")
+            if event is not None:
+                return json.dumps(event)
+            raise StopAsyncIteration
 
     async def _start(self) -> None:
         self._started = True
@@ -112,9 +118,11 @@ class _OpenAiCompatStream:
         )
         if self._response.status != 200:
             body = await self._response.text()
-            self._pending.append(
-                json.dumps(self._decoder.make_error_event(f"HTTP {self._response.status}: {body[:200]}"))
+            event = self._decoder.make_error_event(
+                f"HTTP {self._response.status}: {body[:200]}"
             )
+            if event is not None:
+                self._pending.append(json.dumps(event))
             await self.aclose()
             return
         self._content_iter = self._response.content.__aiter__()

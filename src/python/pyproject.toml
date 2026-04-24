@@ -26,6 +26,10 @@ packages = ["flash_agents"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "flash_agents/wasm/core.wasm" = "flash_agents/wasm/core.wasm"
+# The SHA file is read at import time by flash_agents/wasm/host.py. Without
+# this line a pip-installed wheel fails at first Agent.create() with
+# `WasmHostError: CORE_WASM_SHA256.txt not found`.
+"flash_agents/wasm/CORE_WASM_SHA256.txt" = "flash_agents/wasm/CORE_WASM_SHA256.txt"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

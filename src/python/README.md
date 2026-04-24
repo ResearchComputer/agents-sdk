@@ -53,12 +53,38 @@ asyncio.run(main())
 
 - Async multi-turn agent runs.
 - User-defined Python tools via `@tool` decorator or `Tool` subclass.
-- Filesystem-backed memory (`FilesystemMemoryStore`) with the same
-  on-disk format as the Node SDK — memories round-trip across hosts.
-- MCP server **registration** (wiring lands in a future release; v1
+- Filesystem-backed memory (`FilesystemMemoryStore`) — default path is
+  `~/.rc-agents/memory`, matching the Node SDK, so memories round-trip
+  across hosts. Override with `FLASH_AGENTS_MEMORY_DIR` or `root=`.
+- MCP server **registration** (dispatch lands in a future release; v1
   warns when registrations are supplied).
 - OpenAI-compatible LLM client built in; `LlmClient` Protocol for custom
   transports.
+
+## Node SDK Parity Matrix (v1)
+
+`flash-agents` v1 implements a subset of the Node SDK surface. This
+matrix is the authoritative list of what currently works vs. what is
+silently dropped by `parseConfig` in the WASM guest. Passing unsupported
+fields to `Agent.create()` does not fail, but the feature is unavailable.
+
+| Feature                        | Node SDK | flash-agents v1 | Notes                                |
+|--------------------------------|----------|-----------------|--------------------------------------|
+| Multi-turn `prompt()`          | Yes      | Yes             |                                      |
+| Custom `@tool` / `Tool`        | Yes      | Yes             |                                      |
+| Filesystem memory store        | Yes      | Yes             | `~/.rc-agents/memory` default (matches Node) |
+| MCP server registration        | Yes      | Accepted, not dispatched | Wiring in a future release |
+| OpenAI-compat LLM client       | Indirect | Yes             |                                      |
+| Sessions (persist/restore)     | Yes      | No              | `sessionStore` is a no-op stub       |
+| Snapshot / fork / autoFork     | Yes      | No              | `parseConfig` drops these fields     |
+| Skills                         | Yes      | No              | Dropped by `parseConfig`             |
+| Hooks (before/after turn)      | Yes      | No              | Dropped by `parseConfig`             |
+| Permission rules               | Yes      | No (`allowAll`) | Dropped by `parseConfig`             |
+| Swarm / multi-agent            | Yes      | No              | `SwarmManager` not exposed           |
+| MCP tool dispatch              | Yes      | No              | Host stub throws on connect          |
+| Telemetry                      | Yes      | No              | `telemetryOptOut: true`              |
+| Auth token resolver            | Yes      | Stub            | Returns a fixed token                |
+| `allowedRoots` sandbox         | Yes      | No              | Dropped by `parseConfig`             |
 
 ## Architecture
 

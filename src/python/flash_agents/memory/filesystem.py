@@ -62,7 +62,12 @@ def _assert_single_line(field: str, value: str) -> None:
 
 
 class FilesystemMemoryStore:
-    """One .md file per entry. Default root: ~/.flash-agents/memory."""
+    """One .md file per entry. Default root: ``~/.rc-agents/memory``.
+
+    Matches the Node SDK default so memories round-trip across hosts
+    without manual path configuration. Override with the
+    ``FLASH_AGENTS_MEMORY_DIR`` env var or pass ``root=`` explicitly.
+    """
 
     def __init__(self, root: str | pathlib.Path | None = None) -> None:
         if root is None:
@@ -70,7 +75,7 @@ class FilesystemMemoryStore:
             if env:
                 root = pathlib.Path(env).expanduser()
             else:
-                root = pathlib.Path("~/.flash-agents/memory").expanduser()
+                root = pathlib.Path("~/.rc-agents/memory").expanduser()
         self._root = pathlib.Path(root)
 
     async def load(self) -> list[Memory]:

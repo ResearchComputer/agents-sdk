@@ -223,8 +223,16 @@ class OpenAiStreamDecoder:
             "message": self._snapshot_message(final=True, stop_reason="stop"),
         }
 
-    def make_error_event(self, error_message: str) -> dict:
-        """Build an error-shaped AssistantMessageEvent per pi-ai's union."""
+    def make_error_event(self, error_message: str) -> dict | None:
+        """Build an error-shaped AssistantMessageEvent per pi-ai's union.
+
+        Returns None if a terminal event (done or error) was already emitted.
+        pi-ai's contract is "one terminal event per stream"; emitting a
+        second (e.g. `error` after a normal `done`) confuses the guest's
+        event-stream consumer.
+        """
+        if self._done_emitted:
+            return None
         self._done_emitted = True
         return {
             "type": "error",
