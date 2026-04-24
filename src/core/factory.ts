@@ -77,6 +77,7 @@ import { createSwarmTools } from './agents/tools.js';
 import { composeAgentConfig } from './skills.js';
 import { AuthRequiredError } from './errors.js';
 import { extractUserText } from './auto-fork.js';
+import { scopeAdaptersForChild } from './adapters/child-scope.js';
 
 export interface AuthTokenResolver {
   resolve(): Promise<string>;
@@ -499,24 +500,31 @@ export async function createAgentCore(
   });
 
   // Wire telemetry LLM call tracking.
-  // FIFO of start timestamps (one per in-flight assistant message_start).
-  // A queue, not a scalar, so an unmatched start (error path) can't poison
-  // the latency of a later call.
-  // FIFO mirrors: llmCallStartTimes holds one entry per in-flight assistant
-  // turn (pushed on message_start, shifted on message_end). llmRequestSnapshots
-  // holds the messages as they were BEFORE the assistant reply was appended,
-  // so `request_messages` reflects what was actually sent to the LLM for that
-  // turn — not post-reply state. Pairing relies on pi-agent-core emitting
-  // message_start/message_end in order; stream errors that skip message_end
-  // will leave stale heads (see known issue tracked in core-concurrency plan).
-  const llmCallStartTimes: number[] = [];
-  const llmRequestSnapshots: unknown[][] = [];
+  //
+  // Hybrid lookup: try the WeakMap keyed on event.message first (same
+  // object identity across start/end in pi-agent-core's native code
+  // path), and fall back to a FIFO queue when the reference doesn't
+  // match (mock streamFns may emit distinct instances per event). The
+  // WeakMap path is robust against stream errors — an orphan entry is
+  // GC'd with its message and cannot poison a later call. The FIFO path
+  // preserves behavior for tests that swap streamFn, where start/end
+  // pairing is guaranteed by the mock's sequencing.
+  interface LlmCallState {
+    startTime: number;
+    requestMessages: unknown[];
+  }
+  const llmCallStateByMsg = new WeakMap<object, LlmCallState>();
+  const llmCallStateFifo: LlmCallState[] = [];
   agent.subscribe((event) => {
     if (event.type === 'message_start') {
       const msg = event.message as { role: string };
       if (msg.role === 'assistant') {
-        llmCallStartTimes.push(Date.now());
-        llmRequestSnapshots.push([...agent.state.messages]);
+        const state: LlmCallState = {
+          startTime: Date.now(),
+          requestMessages: [...agent.state.messages],
+        };
+        llmCallStateByMsg.set(event.message as unknown as object, state);
+        llmCallStateFifo.push(state);
       }
     }
     if (event.type === 'message_end') {
@@ -528,8 +536,18 @@ export async function createAgentCore(
       };
       if (msg.role === 'assistant' && msg.usage) {
         const now = Date.now();
-        const startTime = llmCallStartTimes.shift() ?? now;
-        const requestMessages = llmRequestSnapshots.shift() ?? [];
+        let state = llmCallStateByMsg.get(event.message as unknown as object);
+        if (state) {
+          llmCallStateByMsg.delete(event.message as unknown as object);
+          // Remove from FIFO too so ordering stays consistent.
+          const idx = llmCallStateFifo.indexOf(state);
+          if (idx !== -1) llmCallStateFifo.splice(idx, 1);
+        } else {
+          // Fallback: FIFO head. Safe when emits are ordered and paired.
+          state = llmCallStateFifo.shift();
+        }
+        const startTime = state?.startTime ?? now;
+        const requestMessages = state?.requestMessages ?? [];
         telemetryCollector.onLlmCall({
           timestamp: startTime,
           modelId: config.model.id,
@@ -733,8 +751,23 @@ export async function createAgentCore(
   // Shutdown coordination: dispose() sets this and waits for any inflight
   // auto-fork before tearing down adapters. Prevents child agents from being
   // spawned against closed MCP/telemetry resources.
-  let isDisposing = false;
+  // Agent lifecycle state machine.
+  // Transitions:
+  //   idle → forking     (turn_end with a pending user message)
+  //   forking → idle     (fork resolves normally)
+  //   idle → disposing   (dispose() called while idle)
+  //   forking → disposing (dispose() called while forking;
+  //                        dispose awaits the in-flight fork then tears
+  //                        down. onBranches is skipped in this path)
+  //   disposing → disposing (second dispose() is a no-op)
+  //
+  // Using a single `autoForkState` variable instead of two independent
+  // booleans makes the invariants explicit and forces every writer to
+  // think about the transition rather than setting a flag in isolation.
+  type AutoForkState = 'idle' | 'forking' | 'disposing';
+  let autoForkState: AutoForkState = 'idle';
   let inFlightAutoFork: Promise<void> | null = null;
+  const isDisposing = () => autoForkState === 'disposing';
 
   async function _spawnChildren(
     baseMessages: AgentMessage[],
@@ -743,7 +776,7 @@ export async function createAgentCore(
   ): Promise<Agent[]> {
     if (n < 0) throw new RangeError(`fork: n must be >= 0, got ${n}`);
     if (n === 0) return [];
-    if (isDisposing) {
+    if (isDisposing()) {
       throw new Error('fork: agent is disposing, cannot spawn children');
     }
 
@@ -789,27 +822,52 @@ export async function createAgentCore(
         apiKey ? { apiKey } : undefined,
       );
 
+      // If ANY pre-fetched response contains tool calls, fall back to the
+      // sequential prompt path for ALL children. The prior implementation
+      // mixed: children whose first response had tool calls re-prompted
+      // from scratch (discarding the pre-fetched response), while
+      // no-tool-call siblings used the pre-fetched response as-is. That
+      // produced systematic divergence — the re-prompted child ran N LLM
+      // rounds while the pre-seeded children ran 0. Worse, the discarded
+      // LLM calls were billed against the parent's cost tracker via
+      // completeN but never recorded per-child.
+      //
+      // The plan's Option B (pre-seed tool-call children with their
+      // fetched response and continue from tool execution) needs upstream
+      // support from pi-agent-core for a promptWithSeed API. Until then,
+      // Option A: drop the optimization when any response has tool calls.
+      const anyHasToolCalls = firstResponses.some((r) =>
+        r.content.some((b) => b.type === 'toolCall'),
+      );
+      if (anyHasToolCalls) {
+        const children = await Promise.all(
+          Array.from({ length: n }, (_, i) =>
+            createAgentCore(childConfig, scopeAdaptersForChild(adapters, runContext.sessionId, i)),
+          ),
+        );
+        await Promise.all(
+          children.map((child) => {
+            child.agent.replaceMessages(structuredClone(baseMessages) as AgentMessage[]);
+            return child.prompt(message);
+          }),
+        );
+        return children;
+      }
+
       const children = await Promise.all(
-        Array.from({ length: n }, () => createAgentCore(childConfig, adapters))
+        Array.from({ length: n }, (_, i) =>
+          createAgentCore(childConfig, scopeAdaptersForChild(adapters, runContext.sessionId, i)),
+        ),
       );
 
       await Promise.all(
         children.map((child, i) => {
-          const hasToolCalls = firstResponses[i].content.some(
-            (b) => b.type === 'toolCall'
-          );
-
-          if (hasToolCalls) {
-            child.agent.replaceMessages(structuredClone(baseMessages) as AgentMessage[]);
-            return child.prompt(message);
-          }
-
           const msgs = structuredClone(baseMessages) as AgentMessage[];
           msgs.push(structuredClone(userMsg));
           msgs.push(firstResponses[i] as AgentMessage);
           child.agent.replaceMessages(msgs);
           return Promise.resolve();
-        })
+        }),
       );
 
       return children;
@@ -817,7 +875,9 @@ export async function createAgentCore(
 
     // Fallback: original behavior
     const children = await Promise.all(
-      Array.from({ length: n }, () => createAgentCore(childConfig, adapters))
+      Array.from({ length: n }, (_, i) =>
+        createAgentCore(childConfig, scopeAdaptersForChild(adapters, runContext.sessionId, i)),
+      ),
     );
 
     await Promise.all(
@@ -862,10 +922,16 @@ export async function createAgentCore(
     },
 
     async dispose(): Promise<void> {
-      // Guard against double-dispose and coordinate with in-flight auto-fork.
-      if (isDisposing) return;
-      isDisposing = true;
-      if (inFlightAutoFork) {
+      // State transitions handled explicitly:
+      //  - 'disposing' → already tearing down, no-op.
+      //  - 'forking'   → flip to 'disposing' so the fork's .then()
+      //                  skips onBranches, then await the fork promise
+      //                  before continuing teardown.
+      //  - 'idle'      → straight to 'disposing'.
+      if (autoForkState === 'disposing') return;
+      const wasForking = autoForkState === 'forking';
+      autoForkState = 'disposing';
+      if (wasForking && inFlightAutoFork) {
         try {
           await inFlightAutoFork;
         } catch {
@@ -1022,18 +1088,31 @@ export async function createAgentCore(
       if (
         event.type === 'turn_end' &&
         lastUserMessage &&
-        !inFlightAutoFork &&
-        !isDisposing
+        autoForkState === 'idle'
       ) {
+        // Atomically transition idle → forking before any await, so a
+        // concurrent turn_end (overlapping tool loop) cannot double-fork.
+        autoForkState = 'forking';
         const message = lastUserMessage;
         lastUserMessage = undefined;
         inFlightAutoFork = sdkAgent
           .fork(message, autoFork.branches)
-          .then(children => autoFork.onBranches(children))
+          .then((children) => {
+            // dispose() may have flipped state to 'disposing' while the
+            // fork was in flight — skip onBranches in that case so user
+            // callbacks don't run against a half-torn-down parent.
+            if (autoForkState === 'disposing') return;
+            return autoFork.onBranches(children);
+          })
           .catch((err) => {
             autoFork.onError?.(err instanceof Error ? err : new Error(String(err)));
           })
-          .finally(() => { inFlightAutoFork = null; });
+          .finally(() => {
+            // Only transition back to idle if we weren't superseded by
+            // a dispose; disposing is terminal.
+            if (autoForkState === 'forking') autoForkState = 'idle';
+            inFlightAutoFork = null;
+          });
       }
     });
   }

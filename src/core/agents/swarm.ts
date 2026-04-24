@@ -121,13 +121,22 @@ export function createSwarmManager(defaults: SwarmManagerDefaults): SwarmManager
       const systemPrompt = config.systemPrompt ?? 'You are a team member working on assigned tasks.';
       const agent = createInternalAgent(systemPrompt, config.model, config.tools);
 
-      // Budget enforcement: if timeoutMs is set, use AbortSignal.timeout
+      // Budget enforcement: setTimeout + clearTimeout beats
+      // AbortSignal.timeout here for two reasons:
+      //   1. AbortSignal.timeout returns a new signal per call whose
+      //      'abort' listener is never removed when the teammate
+      //      finishes normally. Over a long session with many short
+      //      teammates the listeners accumulate until each timeout
+      //      fires naturally, leaking closures over `agent` and
+      //      `abortController` the whole time.
+      //   2. setTimeout gives us a handle we can cancel from the
+      //      resolve branch, so the timer never runs past the work.
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       if (config.budget.timeoutMs) {
-        const timeoutSignal = AbortSignal.timeout(config.budget.timeoutMs);
-        timeoutSignal.addEventListener('abort', () => {
+        timeoutHandle = setTimeout(() => {
           abortController.abort();
           agent.abort();
-        });
+        }, config.budget.timeoutMs);
       }
 
       const teammate: InternalTeamAgent = {
@@ -142,15 +151,21 @@ export function createSwarmManager(defaults: SwarmManagerDefaults): SwarmManager
 
       team.teammates.set(config.name, teammate);
 
-      // Start agent.prompt non-blocking
+      // Start agent.prompt non-blocking. Classify via
+      // abortController.signal.aborted rather than by string-matching the
+      // error message — the previous `err.message.includes('aborted')`
+      // test misclassified any error whose message happened to mention
+      // the word "aborted" (including unrelated user-facing errors).
       agent.prompt(config.prompt).then(
         () => {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
           teammate.status = 'idle';
           teammate.terminationReason = 'taskComplete';
         },
         (err: unknown) => {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
           teammate.status = 'stopped';
-          if (err instanceof Error && (err.name === 'AbortError' || err.message.includes('aborted'))) {
+          if (abortController.signal.aborted) {
             teammate.terminationReason = 'budgetExhausted';
           } else {
             teammate.terminationReason = 'error';
