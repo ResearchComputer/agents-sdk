@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { createKeyRedactor } from './redactors.js';
+import { createKeyRedactor, createContentRedactor } from './redactors.js';
+import type { AgentMessage } from '@mariozechner/pi-agent-core';
 
 describe('createKeyRedactor', () => {
   it('replaces top-level keys in a plain object', () => {
@@ -48,5 +49,75 @@ describe('createKeyRedactor', () => {
     const r = createKeyRedactor(['command'], { toolFilter: (name) => name === 'Bash' });
     expect(r('Bash', { command: 'rm -rf /' })).toEqual({ command: '[redacted]' });
     expect(r('Read', { command: 'not-bash' })).toEqual({ command: 'not-bash' });
+  });
+});
+
+describe('createContentRedactor', () => {
+  const mkUserMsg = (text: string): AgentMessage => ({
+    role: 'user',
+    content: [{ type: 'text', text }],
+  }) as unknown as AgentMessage;
+
+  it('replaces AWS access key IDs', () => {
+    const r = createContentRedactor();
+    const out = r([mkUserMsg('use AKIAIOSFODNN7EXAMPLE for s3')]);
+    const text = (out[0] as { content: { text: string }[] }).content[0].text;
+    expect(text).not.toContain('AKIA');
+    expect(text).toContain('[redacted]');
+  });
+
+  it('replaces OpenAI-style sk- keys', () => {
+    const r = createContentRedactor();
+    const out = r([mkUserMsg('my key is sk-abcdefghijklmnopqrstuvwxyz1234')]);
+    const text = (out[0] as { content: { text: string }[] }).content[0].text;
+    expect(text).not.toContain('sk-abcdef');
+  });
+
+  it('replaces JWT-shaped tokens', () => {
+    const r = createContentRedactor();
+    const jwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkw.abcdefghijklmnop';
+    const out = r([mkUserMsg(`Bearer ${jwt}`)]);
+    const text = (out[0] as { content: { text: string }[] }).content[0].text;
+    expect(text).not.toContain('eyJhbGci');
+  });
+
+  it('passes clean messages through unchanged', () => {
+    const r = createContentRedactor();
+    const out = r([mkUserMsg('hello world')]);
+    const text = (out[0] as { content: { text: string }[] }).content[0].text;
+    expect(text).toBe('hello world');
+  });
+
+  it('respects a custom replacement sentinel', () => {
+    const r = createContentRedactor({ replacement: '***' });
+    const out = r([mkUserMsg('AKIAIOSFODNN7EXAMPLE')]);
+    const text = (out[0] as { content: { text: string }[] }).content[0].text;
+    expect(text).toBe('***');
+  });
+
+  it('handles string-valued content directly', () => {
+    const r = createContentRedactor();
+    const msg = { role: 'user', content: 'AKIAIOSFODNN7EXAMPLE' } as unknown as AgentMessage;
+    const out = r([msg]);
+    expect((out[0] as { content: string }).content).toBe('[redacted]');
+  });
+
+  it('leaves non-text blocks unchanged', () => {
+    const r = createContentRedactor();
+    const msg = {
+      role: 'user',
+      content: [{ type: 'image', url: 'https://example.com/AKIA.png' }],
+    } as unknown as AgentMessage;
+    const out = r([msg]);
+    const block = (out[0] as { content: { type: string; url?: string }[] }).content[0];
+    expect(block.type).toBe('image');
+    expect(block.url).toContain('AKIA');
+  });
+
+  it('applies extra caller-supplied patterns', () => {
+    const r = createContentRedactor({ extraPatterns: [/CUSTOM-\d+/g] });
+    const out = r([mkUserMsg('token CUSTOM-12345 here')]);
+    const text = (out[0] as { content: { text: string }[] }).content[0].text;
+    expect(text).toBe('token [redacted] here');
   });
 });

@@ -20,7 +20,17 @@ export async function uploadSession(
   options: UploadOptions,
 ): Promise<boolean> {
   try {
-    const serialized = JSON.stringify({ sessions: [snapshot] });
+    // When captureTrajectory=false, strip trajectory pointers from the
+    // uploaded payload so the ingest worker does not attempt to fetch the
+    // sidecar or embed trajectory content. The local .trajectory.jsonl file
+    // is unaffected — users still get full local debugging.
+    // Cast because the wire shape allows nullable pointers while the
+    // in-memory SessionSnapshot type requires a non-null trajectoryId for
+    // replay; the upload is a one-way view, never deserialized back.
+    const uploadSnapshot: unknown = options.captureTrajectory
+      ? snapshot
+      : { ...snapshot, trajectoryId: null, lastEventId: null };
+    const serialized = JSON.stringify({ sessions: [uploadSnapshot] });
     if (Buffer.byteLength(serialized, 'utf-8') > MAX_PAYLOAD_BYTES) {
       return false;
     }

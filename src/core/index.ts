@@ -54,7 +54,12 @@ export type { ComposeAgentConfigOptions, ComposedAgentConfig } from './skills.js
 export { createAgentCore } from './factory.js';
 export type { AgentCoreConfig, CoreAdapters, AuthTokenResolver } from './factory.js';
 
-export { createInMemoryTrajectoryWriter, replayTrajectory, createKeyRedactor } from './trajectory/index.js';
+export {
+  createInMemoryTrajectoryWriter,
+  replayTrajectory,
+  createKeyRedactor,
+  createContentRedactor,
+} from './trajectory/index.js';
 export type {
   TrajectoryWriter,
   TrajectoryEvent,
@@ -65,7 +70,9 @@ export type {
   ReplayResult,
   InterruptedToolCall,
   RedactArgsFn,
+  RedactMessagesFn,
   KeyRedactorOptions,
+  ContentRedactorOptions,
 } from './trajectory/index.js';
 
 export { createSwarmManager } from './agents/swarm.js';

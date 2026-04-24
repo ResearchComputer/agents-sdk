@@ -207,4 +207,39 @@ describe('uploadSession', () => {
     expect(written.telemetry).toBeUndefined();
   });
 
+  it('captureTrajectory=false nulls trajectoryId and lastEventId in the uploaded body', async () => {
+    mockFetch.mockResolvedValue({ ok: true, status: 200 });
+
+    await uploadSession(
+      makeSnapshot({ trajectoryId: 'traj-abc', lastEventId: 'ev-1' }),
+      {
+        endpoint: 'https://ingest.example.com',
+        apiKey: 'sk-test',
+        captureTrajectory: false,
+        sessionFilePath: '/tmp/sessions/sess-1.json',
+      },
+    );
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.sessions[0].trajectoryId).toBeNull();
+    expect(body.sessions[0].lastEventId).toBeNull();
+  });
+
+  it('captureTrajectory=true preserves trajectoryId and lastEventId', async () => {
+    mockFetch.mockResolvedValue({ ok: true, status: 200 });
+
+    await uploadSession(
+      makeSnapshot({ trajectoryId: 'traj-abc', lastEventId: 'ev-1' }),
+      {
+        endpoint: 'https://ingest.example.com',
+        apiKey: 'sk-test',
+        captureTrajectory: true,
+        sessionFilePath: '/tmp/sessions/sess-1.json',
+      },
+    );
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.sessions[0].trajectoryId).toBe('traj-abc');
+    expect(body.sessions[0].lastEventId).toBe('ev-1');
+  });
 });

@@ -106,6 +106,7 @@ function createAgent(config: AgentConfig): Promise<Agent>
 | `telemetry` | `TelemetryConfig \| false` | resolved from file/env | Telemetry endpoint + API key. Pass `false` to opt out; skips collection and sidecar writes |
 | `memoryResumeStrategy` | `'pin' \| 'refresh'` | `'pin'` | On resume, reuse the memory selection saved in the snapshot (`pin`, reproducible) or re-run `retrieve()` against the current memory store (`refresh`, picks up changes) |
 | `redactArgs` | `(toolName, args) => unknown` | passthrough | Optional redactor applied to tool `args` before they're written to `tool_call` and `permission_decision` trajectory events. The in-memory `PermissionDecision` log is NOT redacted — only the disk representation. Use with [`createKeyRedactor`](#createkeyredactorkeys-options) or a custom function |
+| `redactMessages` | `(messages: AgentMessage[]) => AgentMessage[]` | passthrough | Optional redactor applied to message arrays before they're written to `llm_api_call.request_messages` and `agent_message.content` trajectory events and before upload. Use with [`createContentRedactor`](#createcontentredactoroptions) for opt-in secret-pattern scanning, or supply your own function. A throwing redactor falls back to the raw messages with a `redact_messages_failed` warning |
 
 ### `TelemetryConfig`
 
@@ -113,9 +114,24 @@ function createAgent(config: AgentConfig): Promise<Agent>
 interface TelemetryConfig {
   endpoint?: string;          // ingest URL; falls back to ~/.rc-agents/telemetry.json, then env
   apiKey?: string;            // tenant API key; same fallback chain
-  captureTrajectory?: boolean; // include messages[] in payload; default true
+  captureTrajectory?: boolean; // include trajectory pointers in upload payload; default true
 }
 ```
+
+**`captureTrajectory`**: when `false`, the uploader strips `trajectoryId` and `lastEventId` from the POST body so the ingest worker cannot fetch or link the sidecar. The **local `.trajectory.jsonl` file is unaffected** — it continues to be written for local debugging. Only the wire representation changes.
+
+### Privacy: what gets written and uploaded
+
+| Surface | Controlled by | Default |
+|---|---|---|
+| Tool args in `tool_call` / `permission_decision` JSONL | `redactArgs` | passthrough |
+| LLM request messages in `llm_api_call` JSONL | `redactMessages` | passthrough |
+| Assistant / user content in `agent_message` JSONL | `redactMessages` | passthrough |
+| In-memory `PermissionDecision` log | not redacted | raw args preserved for audit callbacks |
+| Upload body trajectory pointers | `captureTrajectory` | included |
+| Local `.trajectory.jsonl` sidecar | always written | (captureTrajectory does not apply) |
+
+As of `src/core/factory.ts` the `request_messages` captured in `llm_api_call` is the snapshot **as of `message_start`** — i.e., the exact input sent to the LLM for that turn, excluding the assistant's own reply. This avoids O(n²) growth on long sessions and prevents the uploader's 5 MB guard from silently dropping sessions.
 
 ### `AutoForkConfig`
 
@@ -1151,6 +1167,32 @@ function createKeyRedactor(
 Deliberately simple — the SDK does not ship a secret scanner or value-based heuristics. Callers declare the allowlist of field names to scrub.
 
 Wire it in via `AgentConfig.redactArgs` (Node factory) or `CoreAdapters.redactArgs` (core factory).
+
+### `createContentRedactor(options?)`
+
+Builds a `RedactMessagesFn` that scans text content in each `AgentMessage` and replaces well-known secret patterns with a sentinel. Used to scrub secrets from `llm_api_call.request_messages` and `agent_message.content` payloads in the trajectory (and from the upload body).
+
+```typescript
+type RedactMessagesFn = (messages: AgentMessage[]) => AgentMessage[];
+
+interface ContentRedactorOptions {
+  replacement?: string;      // default '[redacted]'
+  extraPatterns?: RegExp[];  // additional caller-supplied patterns
+}
+
+function createContentRedactor(
+  options?: ContentRedactorOptions,
+): RedactMessagesFn
+```
+
+Built-in patterns:
+- AWS access key IDs: `AKIA[A-Z0-9]{16}`
+- OpenAI-style keys: `sk-[A-Za-z0-9]{20,}`
+- JWT-shaped tokens: three base64url segments separated by dots
+
+Opt-in only — the factory never enables content scanning by default. This is a best-effort pattern match, **not a DLP solution**. Combine with `createKeyRedactor` (for tool args) to cover both surfaces.
+
+Wire it in via `AgentConfig.redactMessages` (Node factory) or `CoreAdapters.redactMessages` (core factory).
 
 ---
 

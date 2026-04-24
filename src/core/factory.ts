@@ -20,7 +20,7 @@ import type { TelemetryCollector } from './telemetry/collector.js';
 import type { TelemetrySink } from './telemetry/sink.js';
 import type { LlmClient } from './llm/client.js';
 import type { TrajectoryWriter, TrajectoryEvent } from './trajectory/writer.js';
-import type { RedactArgsFn } from './trajectory/redactors.js';
+import type { RedactArgsFn, RedactMessagesFn } from './trajectory/redactors.js';
 import { replayTrajectory } from './trajectory/replay.js';
 import { createInMemoryTrajectoryWriter } from './trajectory/writer.js';
 import type { ContextState, SessionSnapshot } from './types.js';
@@ -126,6 +126,13 @@ export interface CoreAdapters {
    * createKeyRedactor or their own implementation.
    */
   redactArgs?: RedactArgsFn;
+  /**
+   * Optional redactor applied to AgentMessage arrays before they're written
+   * to trajectory events (llm_api_call.request_messages, agent_message) and
+   * before upload. Threaded through from AgentConfig.redactMessages. Pair
+   * with createContentRedactor for opt-in secret-pattern scanning.
+   */
+  redactMessages?: RedactMessagesFn;
 }
 
 /**
@@ -308,6 +315,24 @@ export async function createAgentCore(
       }
     : (_toolName, args) => args;
 
+  // Same pattern as redactArgs: defensive catch + passthrough fallback so
+  // a throwing user redactor can't break the session. Applied to both the
+  // trajectory write path and (indirectly) to upload payloads.
+  const redactMessages: RedactMessagesFn = adapters.redactMessages
+    ? (messages) => {
+        try {
+          return adapters.redactMessages!(messages);
+        } catch (err) {
+          addWarning(
+            'redact_messages_failed',
+            `redactMessages threw: ${(err as Error).message}`,
+            err,
+          );
+          return messages;
+        }
+      }
+    : (messages) => messages;
+
   const telemetryToolStartTimes = new Map<string, number>();
   const trajectoryToolStartTimes = new Map<string, number>();
   // tool_call_id -> trajectory event_id, so tool_result can chain to it.
@@ -477,12 +502,21 @@ export async function createAgentCore(
   // FIFO of start timestamps (one per in-flight assistant message_start).
   // A queue, not a scalar, so an unmatched start (error path) can't poison
   // the latency of a later call.
+  // FIFO mirrors: llmCallStartTimes holds one entry per in-flight assistant
+  // turn (pushed on message_start, shifted on message_end). llmRequestSnapshots
+  // holds the messages as they were BEFORE the assistant reply was appended,
+  // so `request_messages` reflects what was actually sent to the LLM for that
+  // turn — not post-reply state. Pairing relies on pi-agent-core emitting
+  // message_start/message_end in order; stream errors that skip message_end
+  // will leave stale heads (see known issue tracked in core-concurrency plan).
   const llmCallStartTimes: number[] = [];
+  const llmRequestSnapshots: unknown[][] = [];
   agent.subscribe((event) => {
     if (event.type === 'message_start') {
       const msg = event.message as { role: string };
       if (msg.role === 'assistant') {
         llmCallStartTimes.push(Date.now());
+        llmRequestSnapshots.push([...agent.state.messages]);
       }
     }
     if (event.type === 'message_end') {
@@ -495,6 +529,7 @@ export async function createAgentCore(
       if (msg.role === 'assistant' && msg.usage) {
         const now = Date.now();
         const startTime = llmCallStartTimes.shift() ?? now;
+        const requestMessages = llmRequestSnapshots.shift() ?? [];
         telemetryCollector.onLlmCall({
           timestamp: startTime,
           modelId: config.model.id,
@@ -504,13 +539,14 @@ export async function createAgentCore(
           latencyMs: now - startTime,
         });
         if (trajectoryWriter) {
+          const redactedRequest = redactMessages(requestMessages as AgentMessage[]);
           trajectoryWriter.append({
             event_type: 'llm_api_call',
             payload: {
               turn_id: trajectoryWriter.trajectoryId,
               model_id: config.model.id,
               provider: config.model.provider,
-              request_messages: agent.state.messages as unknown[],
+              request_messages: redactedRequest as unknown[],
               response_message: msg as unknown as Record<string, unknown>,
               usage: {
                 input_tokens: msg.usage.input,
@@ -527,7 +563,8 @@ export async function createAgentCore(
       // schema (spec/schemas/trajectory-event.v1.schema.json).
       if (trajectoryWriter && AGENT_MESSAGE_ROLES.has(msg.role)) {
         const trajRole = msg.role === 'toolResult' ? 'tool' : msg.role;
-        const content = (msg as unknown as { content?: unknown }).content;
+        const [redacted] = redactMessages([msg as unknown as AgentMessage]);
+        const content = (redacted as unknown as { content?: unknown }).content;
         trajectoryWriter.append({
           event_type: 'agent_message',
           payload: {

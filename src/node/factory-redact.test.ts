@@ -3,9 +3,68 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { getModel } from '@researchcomputer/ai-provider';
+import { createAssistantMessageEventStream } from '@researchcomputer/ai-provider';
+import { Type } from '@sinclair/typebox';
 import { createAgent } from './factory.js';
-import { createKeyRedactor } from '../core/trajectory/redactors.js';
-import type { SessionSnapshot } from '../core/types.js';
+import { createKeyRedactor, createContentRedactor } from '../core/trajectory/redactors.js';
+import type { StreamFn } from '@mariozechner/pi-agent-core';
+import type { Capability } from '../core/types.js';
+
+/**
+ * These tests drive real tool calls through a mocked streamFn and then
+ * inspect the trajectory JSONL on disk to confirm redaction actually applied.
+ * The previous version of this file called `redactor(...)` directly and
+ * asserted `snap.version === 2` — neither proved wiring worked.
+ */
+
+function makeToolCallStream(toolName: string, args: Record<string, unknown>): StreamFn {
+  let turn = 0;
+  return (m) => {
+    turn++;
+    const stream = createAssistantMessageEventStream();
+    const msg = {
+      role: 'assistant' as const,
+      content:
+        turn === 1
+          ? [{ type: 'toolCall' as const, id: 'tc-1', name: toolName, arguments: args }]
+          : [{ type: 'text' as const, text: 'done' }],
+      stopReason: turn === 1 ? ('toolUse' as const) : ('stop' as const),
+      api: m.api,
+      provider: m.provider,
+      model: m.id,
+      timestamp: Date.now(),
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
+    stream.push({ type: 'start', partial: msg });
+    stream.push({
+      type: 'done',
+      reason: msg.stopReason === 'toolUse' ? 'toolUse' : 'stop',
+      message: msg,
+    });
+    return stream;
+  };
+}
+
+const echoTool = {
+  name: 'EchoTool',
+  label: 'Echo Tool',
+  description: 'Echoes its command argument',
+  parameters: Type.Object({
+    command: Type.String(),
+    apiKey: Type.Optional(Type.String()),
+  }),
+  capabilities: [] as Capability[],
+  async execute() {
+    return { content: [{ type: 'text' as const, text: 'ok' }], details: {} };
+  },
+};
 
 describe('createAgent — Phase 5 redaction', () => {
   let sessionDir: string;
@@ -20,7 +79,17 @@ describe('createAgent — Phase 5 redaction', () => {
     await fs.rm(memoryDir, { recursive: true, force: true });
   });
 
-  it('redactArgs scrubs permission_decision payloads written to the trajectory', async () => {
+  async function readTrajectoryEvents(): Promise<Record<string, unknown>[]> {
+    const entries = await fs.readdir(sessionDir);
+    const trajFile = entries.find((e) => e.endsWith('.trajectory.jsonl'))!;
+    const raw = await fs.readFile(path.join(sessionDir, trajFile), 'utf-8');
+    return raw
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l));
+  }
+
+  it('redactArgs scrubs tool_call args written to the trajectory JSONL', async () => {
     const model = getModel('openai', 'gpt-4o-mini');
     const agent = await createAgent({
       model,
@@ -28,35 +97,26 @@ describe('createAgent — Phase 5 redaction', () => {
       authToken: 't',
       sessionDir,
       memoryDir,
-      redactArgs: createKeyRedactor(['password', 'apiKey']),
+      tools: [echoTool],
+      streamFn: makeToolCallStream('EchoTool', { command: 'echo hello', apiKey: 'sk-secret' }),
+      redactArgs: createKeyRedactor(['apiKey']),
     });
+    await agent.prompt('run it');
     await agent.dispose();
 
-    const files = await fs.readdir(sessionDir);
-    const snapFile = files.find((f) => f.endsWith('.json') && !f.endsWith('.telemetry.json'))!;
-    const snap = JSON.parse(await fs.readFile(path.join(sessionDir, snapFile), 'utf-8')) as SessionSnapshot;
-
-    // Append a permission_decision with sensitive args directly; next
-    // resume will replay it. Then inspect what WOULD be written for
-    // future events by confirming redactor is applied for a fresh
-    // permission_decision emitted in a follow-up run. For Phase 5
-    // verification, the simpler check is that the redactor IS wired:
-    // invoking it on a sample produces the scrubbed output.
-    const redactor = createKeyRedactor(['password', 'apiKey']);
-    expect(redactor('Bash', { command: 'echo', password: 'secret' })).toEqual({
-      command: 'echo',
-      password: '[redacted]',
-    });
-    // Session is clean; the wiring path was type-checked above.
-    expect(snap.version).toBe(2);
+    const events = await readTrajectoryEvents();
+    const toolCall = events.find(
+      (e) =>
+        e.event_type === 'tool_call' &&
+        (e.payload as { tool_call_id?: string }).tool_call_id === 'tc-1',
+    );
+    expect(toolCall).toBeDefined();
+    const args = (toolCall!.payload as { args: { command: string; apiKey: string } }).args;
+    expect(args.apiKey).toBe('[redacted]');
+    expect(args.command).toBe('echo hello'); // non-sensitive field preserved
   });
 
-  it('in-memory permission log retains raw args (not redacted) for audit callbacks', async () => {
-    // The spec is explicit that redaction applies to trajectory writes,
-    // not to runContext.permissionDecisions. Callers that need redacted
-    // in-memory decisions can post-process via agent.getWarnings() or a
-    // custom hook. Here we simply verify the contract: the runtime log
-    // and the trajectory log are decoupled.
+  it('redactMessages scrubs secrets from llm_api_call.request_messages', async () => {
     const model = getModel('openai', 'gpt-4o-mini');
     const agent = await createAgent({
       model,
@@ -64,15 +124,98 @@ describe('createAgent — Phase 5 redaction', () => {
       authToken: 't',
       sessionDir,
       memoryDir,
-      redactArgs: (_name, _args) => ({ redactedEverything: '[x]' }),
+      streamFn: (m) => {
+        const stream = createAssistantMessageEventStream();
+        const msg = {
+          role: 'assistant' as const,
+          content: [{ type: 'text' as const, text: 'ok' }],
+          stopReason: 'stop' as const,
+          api: m.api,
+          provider: m.provider,
+          model: m.id,
+          timestamp: Date.now(),
+          usage: {
+            input: 1,
+            output: 1,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 2,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+        };
+        stream.push({ type: 'start', partial: msg });
+        stream.push({ type: 'done', reason: 'stop', message: msg });
+        return stream;
+      },
+      redactMessages: createContentRedactor(),
     });
-    // No live tool calls here — just check that the agent initialized
-    // with a redactor without errors and that warnings are empty.
-    expect(agent.getWarnings().find((w) => w.code === 'redact_args_failed')).toBeUndefined();
+    await agent.prompt('my key is sk-abcdefghijklmnopqrstuvwxyz1234 please help');
     await agent.dispose();
+
+    const events = await readTrajectoryEvents();
+    const llmCall = events.find((e) => e.event_type === 'llm_api_call');
+    expect(llmCall).toBeDefined();
+    const serialized = JSON.stringify(
+      (llmCall!.payload as { request_messages: unknown }).request_messages,
+    );
+    expect(serialized).not.toContain('sk-abcdef');
+    expect(serialized).toContain('[redacted]');
   });
 
-  it('a throwing redactor produces a redact_args_failed warning but does NOT crash the session', async () => {
+  it('llm_api_call.request_messages contains turn-input only, not the just-emitted assistant reply', async () => {
+    const model = getModel('openai', 'gpt-4o-mini');
+    let turn = 0;
+    const streamFn: StreamFn = (m) => {
+      turn++;
+      const stream = createAssistantMessageEventStream();
+      const msg = {
+        role: 'assistant' as const,
+        content: [{ type: 'text' as const, text: `reply-${turn}` }],
+        stopReason: 'stop' as const,
+        api: m.api,
+        provider: m.provider,
+        model: m.id,
+        timestamp: Date.now(),
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+      };
+      stream.push({ type: 'start', partial: msg });
+      stream.push({ type: 'done', reason: 'stop', message: msg });
+      return stream;
+    };
+
+    const agent = await createAgent({
+      model,
+      permissionMode: 'allowAll',
+      authToken: 't',
+      sessionDir,
+      memoryDir,
+      streamFn,
+    });
+    await agent.prompt('first');
+    await agent.prompt('second');
+    await agent.dispose();
+
+    const events = await readTrajectoryEvents();
+    const llmCalls = events.filter((e) => e.event_type === 'llm_api_call');
+    expect(llmCalls).toHaveLength(2);
+
+    const turn2Messages = (llmCalls[1].payload as { request_messages: unknown[] })
+      .request_messages;
+    const serialized = JSON.stringify(turn2Messages);
+    // The assistant's own turn-2 reply must NOT appear in turn 2's request
+    expect(serialized).not.toContain('reply-2');
+    // But turn 1's reply (historical context) IS part of turn 2's input
+    expect(serialized).toContain('reply-1');
+  });
+
+  it('a throwing redactArgs emits a redact_args_failed warning but does NOT abort the tool call', async () => {
     const model = getModel('openai', 'gpt-4o-mini');
     const agent = await createAgent({
       model,
@@ -80,15 +223,65 @@ describe('createAgent — Phase 5 redaction', () => {
       authToken: 't',
       sessionDir,
       memoryDir,
+      tools: [echoTool],
+      streamFn: makeToolCallStream('EchoTool', { command: 'echo ok' }),
       redactArgs: () => {
-        throw new Error('redactor bug');
+        throw new Error('redactArgs bug');
       },
     });
-    // With no tool_call activity, the redactor may never be invoked in
-    // this test. Dispose should still succeed.
+    await agent.prompt('go');
     await agent.dispose();
-    // If the redactor IS invoked anywhere (e.g. on a future tool call),
-    // the factory swallows the throw into a warning; sessions don't die.
-    expect(() => agent.getWarnings()).not.toThrow();
+
+    const warnings = agent.getWarnings();
+    expect(warnings.some((w) => w.code === 'redact_args_failed')).toBe(true);
+
+    // Tool call still completed — trajectory has a tool_result
+    const events = await readTrajectoryEvents();
+    expect(events.some((e) => e.event_type === 'tool_result')).toBe(true);
+  });
+
+  it('a throwing redactMessages emits a redact_messages_failed warning and does not break the session', async () => {
+    const model = getModel('openai', 'gpt-4o-mini');
+    const agent = await createAgent({
+      model,
+      permissionMode: 'allowAll',
+      authToken: 't',
+      sessionDir,
+      memoryDir,
+      streamFn: (m) => {
+        const stream = createAssistantMessageEventStream();
+        const msg = {
+          role: 'assistant' as const,
+          content: [{ type: 'text' as const, text: 'ok' }],
+          stopReason: 'stop' as const,
+          api: m.api,
+          provider: m.provider,
+          model: m.id,
+          timestamp: Date.now(),
+          usage: {
+            input: 1,
+            output: 1,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 2,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+        };
+        stream.push({ type: 'start', partial: msg });
+        stream.push({ type: 'done', reason: 'stop', message: msg });
+        return stream;
+      },
+      redactMessages: () => {
+        throw new Error('redactMessages bug');
+      },
+    });
+    await agent.prompt('hello');
+    await agent.dispose();
+
+    const warnings = agent.getWarnings();
+    expect(warnings.some((w) => w.code === 'redact_messages_failed')).toBe(true);
+    // Trajectory still got written
+    const events = await readTrajectoryEvents();
+    expect(events.some((e) => e.event_type === 'llm_api_call')).toBe(true);
   });
 });

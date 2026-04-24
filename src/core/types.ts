@@ -299,6 +299,14 @@ export interface AgentConfig {
    * representation. Use with `createKeyRedactor` or a custom fn.
    */
   redactArgs?: (toolName: string, args: unknown) => unknown;
+  /**
+   * Optional redactor applied to AgentMessage arrays before they're written
+   * to trajectory events (`llm_api_call.request_messages`, `agent_message`)
+   * and before upload. Return a new array; a throwing redactor falls back to
+   * the original messages with a warning. Default: passthrough. Pair with
+   * `createContentRedactor` for opt-in secret-pattern scanning.
+   */
+  redactMessages?: (messages: AgentMessage[]) => AgentMessage[];
 }
 
 export interface Agent {

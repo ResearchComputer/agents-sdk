@@ -11,5 +11,10 @@ export type {
 export { replayTrajectory } from './replay.js';
 export type { ReplayResult, InterruptedToolCall } from './replay.js';
 
-export { createKeyRedactor } from './redactors.js';
-export type { RedactArgsFn, KeyRedactorOptions } from './redactors.js';
+export { createKeyRedactor, createContentRedactor } from './redactors.js';
+export type {
+  RedactArgsFn,
+  RedactMessagesFn,
+  KeyRedactorOptions,
+  ContentRedactorOptions,
+} from './redactors.js';

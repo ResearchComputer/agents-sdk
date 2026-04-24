@@ -80,6 +80,7 @@ export async function createAgent(config: AgentConfig): Promise<Agent> {
       createNodeTrajectoryWriter({ dir: trajectoryDir, trajectoryId: options?.trajectoryId }),
     readTrajectoryFromStorage: (trajectoryId) => readNodeTrajectoryFile(trajectoryDir, trajectoryId),
     redactArgs: config.redactArgs,
+    redactMessages: config.redactMessages,
   };
 
   // 8. System-prompt hash (createHash is sync; Web Crypto digest is async)
