@@ -1,8 +1,10 @@
 import { Type } from '@sinclair/typebox';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import type { SdkTool, ToolOptions } from '../../core/types.js';
 import { ToolExecutionError } from '../../core/errors.js';
-import { resolvePath, isRealPathAllowed } from './util.js';
+import { resolvePath, isRealPathAllowed, isBinaryContent } from './util.js';
+import { pathMutex, safeToolError, safePathError, safeInvalidInputError } from '../security/index.js';
 
 const EditParams = Type.Object({
   file_path: Type.String(),
@@ -10,6 +12,17 @@ const EditParams = Type.Object({
   new_string: Type.String(),
   replace_all: Type.Optional(Type.Boolean()),
 });
+
+/**
+ * Reject strings containing unpaired UTF-16 surrogates. Node's utf-8
+ * encoder will silently replace lone surrogates with U+FFFD, corrupting
+ * the file round-trip. Refuse the edit instead.
+ */
+function hasLoneSurrogate(s: string): boolean {
+  // High surrogate not followed by low surrogate, OR low surrogate not
+  // preceded by a high surrogate.
+  return /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s);
+}
 
 export function createEditTool(options?: ToolOptions): SdkTool<typeof EditParams> {
   const cwd = options?.cwd ?? process.cwd();
@@ -25,59 +38,108 @@ export function createEditTool(options?: ToolOptions): SdkTool<typeof EditParams
       const absPath = resolvePath(params.file_path, cwd);
 
       if (!(await isRealPathAllowed(absPath, cwd, allowedRoots))) {
-        throw new ToolExecutionError(`Path not allowed: ${params.file_path}`);
+        throw safePathError('edit');
       }
 
-      let content: string;
+      // NFC-normalize the inputs and reject lone surrogates. Without this,
+      // a pair-splitting old_string or a lone-surrogate new_string round-
+      // trips through fs writeFile as U+FFFD and silently corrupts the file.
+      const oldStr = params.old_string.normalize('NFC');
+      const newStr = params.new_string.normalize('NFC');
+      if (hasLoneSurrogate(oldStr) || hasLoneSurrogate(newStr)) {
+        throw safeInvalidInputError('string contains lone surrogates');
+      }
+
+      // Acquire the per-path mutex spanning read + write so a concurrent
+      // Edit/Write on the same file cannot interleave. Without this, two
+      // parallel Edits read the same content, apply against stale state,
+      // and the second writeFile wins — the first edit is silently lost.
+      const release = await pathMutex.acquire(absPath);
       try {
-        content = await fs.readFile(absPath, 'utf-8');
-      } catch (err: any) {
-        throw new ToolExecutionError(`Failed to read file: ${err.message}`);
-      }
+        let contentBuf: Buffer;
+        try {
+          contentBuf = await fs.readFile(absPath);
+        } catch (err) {
+          throw safeToolError(err, 'io_error');
+        }
 
-      const replaceAll = params.replace_all ?? false;
+        // Binary files silently mojibake through fs.readFile/writeFile with
+        // utf-8 encoding — refuse. This repo's own core.wasm is a real
+        // example of a file an LLM could be prompt-injected into "editing."
+        if (isBinaryContent(contentBuf)) {
+          throw new ToolExecutionError('[binary_file] refusing to edit binary file');
+        }
 
-      // Fast path for replace_all=false: we only need to know "no match",
-      // "exactly one match", or "more than one match". Stop scanning after
-      // finding a second occurrence instead of counting every one.
-      const firstIdx = content.indexOf(params.old_string);
-      if (firstIdx === -1) {
-        throw new ToolExecutionError(`old_string not found in ${params.file_path}`);
-      }
+        const content = contentBuf.toString('utf-8').normalize('NFC');
+        const replaceAll = params.replace_all ?? false;
 
-      let count: number;
-      if (replaceAll) {
-        count = 1;
-        let searchPos = firstIdx + params.old_string.length;
-        while (true) {
-          const idx = content.indexOf(params.old_string, searchPos);
+        // Overlap-aware scan: advance by 1 (not old_string.length) so
+        // overlapping matches like 'aa' in 'aaa' are counted correctly.
+        // This matters for replace_all=false — the previous jump-ahead
+        // implementation could miss an overlapping second occurrence and
+        // silently apply to the wrong spot.
+        const matches: number[] = [];
+        let pos = 0;
+        while (pos <= content.length) {
+          const idx = content.indexOf(oldStr, pos);
           if (idx === -1) break;
-          count++;
-          searchPos = idx + params.old_string.length;
+          matches.push(idx);
+          if (!replaceAll && matches.length > 1) break;
+          pos = idx + 1;
         }
-      } else {
-        const secondIdx = content.indexOf(params.old_string, firstIdx + params.old_string.length);
-        if (secondIdx !== -1) {
-          throw new ToolExecutionError(
-            `Multiple matches found for old_string in ${params.file_path}. Use replace_all to replace all occurrences.`,
-          );
+
+        if (matches.length === 0) {
+          throw new ToolExecutionError('[not_found] old_string not found');
         }
-        count = 1;
+        if (!replaceAll && matches.length > 1) {
+          throw safeInvalidInputError('multiple matches; use replace_all');
+        }
+
+        let newContent: string;
+        let count: number;
+        if (replaceAll) {
+          // Use split/join (non-overlapping replace — standard JS
+          // semantics). count is the number of splits.
+          newContent = content.split(oldStr).join(newStr);
+          count = matches.length;
+        } else {
+          const idx = matches[0];
+          newContent = content.slice(0, idx) + newStr + content.slice(idx + oldStr.length);
+          count = 1;
+        }
+
+        // Atomic write: write to .tmp in the same directory (so rename is
+        // a same-filesystem op) and then rename over the original. A crash
+        // or a concurrent reader between read and rename never observes a
+        // partial file.
+        const tmp = absPath + '.tmp.' + process.pid + '.' + Date.now();
+        try {
+          await fs.writeFile(tmp, newContent, { encoding: 'utf-8', mode: 0o600 });
+          await fs.rename(tmp, absPath);
+        } catch (err) {
+          // Clean up the tmp file on rename failure so we don't leak.
+          await fs.unlink(tmp).catch(() => {});
+          throw safeToolError(err, 'io_error');
+        }
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Edited ${absPath} (${count} replacement${count > 1 ? 's' : ''})`,
+            },
+          ],
+          details: { path: absPath, replacements: count },
+        };
+      } finally {
+        release();
       }
-
-      let newContent: string;
-      if (replaceAll) {
-        newContent = content.split(params.old_string).join(params.new_string);
-      } else {
-        newContent = content.slice(0, firstIdx) + params.new_string + content.slice(firstIdx + params.old_string.length);
-      }
-
-      await fs.writeFile(absPath, newContent, 'utf-8');
-
-      return {
-        content: [{ type: 'text', text: `Edited ${absPath} (${count} replacement${count > 1 ? 's' : ''})` }],
-        details: { path: absPath, replacements: count },
-      };
     },
   };
 }
+
+// Re-export for tests that want to use the mutex directly.
+export { pathMutex } from '../security/index.js';
+
+// Unused import suppressor — `path` is imported for future dirname checks.
+void path;

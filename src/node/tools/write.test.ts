@@ -51,7 +51,7 @@ describe('createWriteTool', () => {
   it('throws for path outside cwd', async () => {
     const tool = createWriteTool({ cwd: tmpDir });
     await expect(tool.execute('call1', { file_path: '/etc/evil.txt', content: 'x' }))
-      .rejects.toThrow(/not allowed/i);
+      .rejects.toThrow(/path_not_allowed/i);
   });
 
   it('resolves relative paths against cwd', async () => {

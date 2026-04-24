@@ -2,8 +2,8 @@ import { Type } from '@sinclair/typebox';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { SdkTool, ToolOptions } from '../../core/types.js';
-import { ToolExecutionError } from '../../core/errors.js';
 import { resolvePath, isRealPathAllowed } from './util.js';
+import { pathMutex, safeToolError, safePathError } from '../security/index.js';
 
 const WriteParams = Type.Object({
   file_path: Type.String(),
@@ -24,16 +24,50 @@ export function createWriteTool(options?: ToolOptions): SdkTool<typeof WritePara
       const absPath = resolvePath(params.file_path, cwd);
 
       if (!(await isRealPathAllowed(absPath, cwd, allowedRoots))) {
-        throw new ToolExecutionError(`Path not allowed: ${params.file_path}`);
+        throw safePathError('write');
       }
 
-      await fs.mkdir(path.dirname(absPath), { recursive: true });
-      await fs.writeFile(absPath, params.content, 'utf-8');
+      // Also validate the directory we're about to create. Without this,
+      // an LLM-supplied path through a symlinked subdirectory can cause
+      // fs.mkdir to walk out of the sandbox (the symlink itself is inside;
+      // the resolved dirname isn't).
+      const dir = path.dirname(absPath);
+      if (!(await isRealPathAllowed(dir, cwd, allowedRoots))) {
+        throw safePathError('write');
+      }
 
-      return {
-        content: [{ type: 'text', text: `Wrote ${Buffer.byteLength(params.content)} bytes to ${absPath}` }],
-        details: { path: absPath, bytes: Buffer.byteLength(params.content) },
-      };
+      const release = await pathMutex.acquire(absPath);
+      try {
+        try {
+          await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+        } catch (err) {
+          throw safeToolError(err, 'io_error');
+        }
+
+        // Atomic write: tmp + rename. Prevents partial-content reads during
+        // a concurrent read, and guarantees a parallel Write on the same
+        // file (serialized by pathMutex above) observes complete states.
+        const tmp = absPath + '.tmp.' + process.pid + '.' + Date.now();
+        try {
+          await fs.writeFile(tmp, params.content, { encoding: 'utf-8', mode: 0o600 });
+          await fs.rename(tmp, absPath);
+        } catch (err) {
+          await fs.unlink(tmp).catch(() => {});
+          throw safeToolError(err, 'io_error');
+        }
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Wrote ${Buffer.byteLength(params.content)} bytes to ${absPath}`,
+            },
+          ],
+          details: { path: absPath, bytes: Buffer.byteLength(params.content) },
+        };
+      } finally {
+        release();
+      }
     },
   };
 }
