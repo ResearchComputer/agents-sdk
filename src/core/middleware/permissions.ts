@@ -8,6 +8,7 @@ const MUTATION_CAPABILITIES: Capability[] = [
   'git:mutate',
   'mcp:call',
   'swarm:mutate',
+  'shell:exec',
 ];
 
 const SOURCE_PRIORITY: Record<string, number> = { user: 3, project: 2, session: 1 };

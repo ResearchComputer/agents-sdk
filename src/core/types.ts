@@ -11,7 +11,14 @@ export type Capability =
   | 'git:mutate'
   | 'mcp:call'
   /** Mutation on the swarm (spawn/dismiss teammates, send messages). */
-  | 'swarm:mutate';
+  | 'swarm:mutate'
+  /**
+   * Arbitrary shell execution with an LLM-supplied command string. Broader
+   * than `process:spawn` (which can be granted to tools that exec a
+   * validated argv). Claimed only by the Bash tool; rules targeting
+   * 'shell:exec' let users gate the shell separately from other spawners.
+   */
+  | 'shell:exec';
 
 // SdkTool
 export interface SdkTool<TParameters extends TSchema = TSchema, TDetails = any> extends AgentTool<TParameters, TDetails> {
