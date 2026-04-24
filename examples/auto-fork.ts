@@ -10,9 +10,9 @@
  *
  * Requires OPENAI_API_KEY (or whichever provider you configure).
  */
-import { createAgent } from '../src/index.js';
+import { createAgent } from '../src/node/index.js';
 import { getModel } from '@researchcomputer/ai-provider';
-import type { Agent } from '../src/index.js';
+import type { Agent } from '../src/node/index.js';
 
 const model = getModel('openai', 'gpt-4o-mini');
 

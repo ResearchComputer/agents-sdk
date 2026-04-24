@@ -31,9 +31,9 @@ For JS runtimes that aren't Node (Deno, Bun, browser worker).
 
 For non-JS hosts (Rust, Python, Go, …).
 
-- **Artifact:** `core.wasm` built by `npm run build:wasm`.
-- **ABI contract:** [docs/spec/wasm.md](./docs/spec/wasm.md) — authoritative: [`examples/python-stub/wasm/world.wit`](./examples/python-stub/wasm/world.wit).
-- **Reference implementation:** [`examples/python-stub/`](./examples/python-stub).
+- **Artifact:** `core.wasm` built by `bun run build:wasm` (alias for `build:wasm:python`).
+- **ABI contract:** [docs/spec/wasm.md](./docs/spec/wasm.md) — authoritative: [`src/python/wit/world.wit`](./src/python/wit/world.wit).
+- **Reference implementation:** [`src/python/`](./src/python) (Rust + PyO3 + wasmtime host at `src/python/wasm-host/`; Python SDK at `src/python/flash_agents/`).
 - **Guide:** [docs/embedding-core.md § WASM Component path](./docs/embedding-core.md#the-wasm-component-path).
 
 ## 3. Consume agent outputs or generate bindings

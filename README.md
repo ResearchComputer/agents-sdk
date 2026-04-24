@@ -151,7 +151,7 @@ bun run lint
 bun run build:wasm
 ```
 
-`npm` still works for every script above — `npm install && npm run test` is supported for contributors who don't want to add a second toolchain. The only thing exclusive to Bun is the WASM bundler, which calls the `Bun.build()` API directly in `examples/python-stub/wasm/bun-build.ts`.
+`npm` still works for every script above — `npm install && npm run test` is supported for contributors who don't want to add a second toolchain. The only thing exclusive to Bun is the WASM bundler, which calls the `Bun.build()` API directly in `src/python/wasm-guest/bun-build.ts`.
 
 ## Requirements
 

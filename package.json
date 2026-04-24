@@ -17,17 +17,22 @@
   },
   "files": [
     "dist",
-    "!dist/**/*.test.*"
+    "!dist/**/*.test.*",
+    "docs/spec/schemas",
+    "docs/spec/examples",
+    "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -b && bun run scripts/copy-spec.ts",
     "dev": "tsc --watch",
     "test": "npm run test:lint-core && vitest --run",
     "test:watch": "vitest",
     "test:coverage": "npm run test:lint-core && vitest --run --coverage",
     "test:lint-core": "! grep -rE \"from ['\\\"]node:\" --include=\"*.ts\" --exclude=\"*.test.ts\" src/core/ || { echo 'node: import found in src/core/ (non-test)'; exit 1; }",
     "lint": "tsc -p tsconfig.lint.json --noEmit --composite false && tsc -p src/python/wasm-guest/tsconfig.wasm.json --noEmit --pretty false",
-    "prepublishOnly": "node -e \"const p=require('./package.json'); if(JSON.stringify(p.dependencies).includes('file:')) { console.error('ERROR: file: dependencies found — publish the ai-provider fork first'); process.exit(1); }\"",
+    "lint:examples": "tsc -p examples/tsconfig.json",
+    "prepublishOnly": "bun run scripts/prepublish-guard.ts",
+    "build:wasm": "bun run build:wasm:python",
     "build:wasm:python:bundle": "bun run src/python/wasm-guest/bun-build.ts",
     "build:wasm:python:componentize": "jco componentize src/python/flash_agents/wasm/core.bundle.js --wit src/python/wit/world.wit --world-name flash-agent-core --out src/python/flash_agents/wasm/core.wasm --disable http --disable fetch-event",
     "build:wasm:python:sha": "bun run scripts/build-sha256.ts",

@@ -12,7 +12,7 @@
  *   MODEL_ID   - Model identifier to request (default: llama3.2)
  *   API_KEY    - API key, if the endpoint requires one
  */
-import { createAgent } from '../src/index.js';
+import { createAgent } from '../src/node/index.js';
 import type { Model } from '@researchcomputer/ai-provider';
 
 const endpoint = process.env.ENDPOINT ?? 'http://localhost:11434/v1';

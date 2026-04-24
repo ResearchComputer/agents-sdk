@@ -3,7 +3,25 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export async function findSpecDir(startFrom?: string): Promise<string> {
-  let dir = startFrom ?? path.dirname(fileURLToPath(import.meta.url));
+  const selfDir = path.dirname(fileURLToPath(import.meta.url));
+
+  // Fast-path: the published tarball places schemas at dist/spec/schemas
+  // (populated by scripts/copy-spec.ts during `bun run build`). When running
+  // from node_modules this is the only location that exists — the
+  // `docs/spec/` development tree is not shipped alongside source files.
+  // Look one level up from dist/node/spec/ → dist/spec/.
+  if (!startFrom) {
+    const inPkgCandidate = path.join(selfDir, '..', 'spec');
+    try {
+      await fs.stat(path.join(inPkgCandidate, 'schemas'));
+      return inPkgCandidate;
+    } catch {
+      // Fall through to dev-mode walker.
+    }
+  }
+
+  // Dev-mode: walk up from the module location looking for docs/spec/schemas/.
+  let dir = startFrom ?? selfDir;
   const root = path.parse(dir).root;
   while (dir !== root) {
     const candidate = path.join(dir, 'docs', 'spec');
@@ -18,7 +36,10 @@ export async function findSpecDir(startFrom?: string): Promise<string> {
     }
     dir = path.dirname(dir);
   }
-  throw new Error('Could not locate docs/spec/ directory by walking up from ' + (startFrom ?? 'module location'));
+  throw new Error(
+    'Could not locate docs/spec/ directory by walking up from ' +
+      (startFrom ?? 'module location'),
+  );
 }
 
 export async function loadSchema(record: string, version: string, specDir?: string): Promise<object> {
