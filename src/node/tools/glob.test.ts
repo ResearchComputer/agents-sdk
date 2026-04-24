@@ -98,4 +98,27 @@ describe('createGlobTool', () => {
       fs.chmodSync(unreadable, 0o755);
     }
   });
+
+  it('fallback walker skips symlinks that point outside the sandbox', async () => {
+    const originalGlob = (fsPromises as any).glob;
+    (fsPromises as any).glob = undefined;
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'glob-outside-'));
+    fs.writeFileSync(path.join(outside, 'secret.ts'), 'SECRET');
+    try {
+      const linkPath = path.join(tmpDir, 'src', 'leak');
+      try {
+        fs.symlinkSync(outside, linkPath);
+      } catch {
+        // CI permission oddity — skip on systems that can't create links
+        return;
+      }
+      const tool = createGlobTool({ cwd: tmpDir });
+      const result = await tool.execute('call1', { pattern: '**/*.ts' });
+      const text = (result.content[0] as { text: string }).text;
+      expect(text).not.toContain('secret.ts');
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+      (fsPromises as any).glob = originalGlob;
+    }
+  });
 });

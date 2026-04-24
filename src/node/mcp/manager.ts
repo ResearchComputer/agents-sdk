@@ -12,6 +12,27 @@ interface InternalConnection extends McpConnection {
   tools: SdkTool[];
 }
 
+const MCP_ENV_DENYLIST = new Set([
+  'LD_PRELOAD',
+  'LD_LIBRARY_PATH',
+  'LD_AUDIT',
+  'DYLD_INSERT_LIBRARIES',
+  'DYLD_LIBRARY_PATH',
+  'DYLD_FORCE_FLAT_NAMESPACE',
+  'NODE_OPTIONS',
+  'NODE_PATH',
+]);
+
+function sanitizeMcpEnv(env: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (!env) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (MCP_ENV_DENYLIST.has(k)) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
 export function createMcpManager(): McpManager {
   const connections = new Map<string, InternalConnection>();
 
@@ -30,10 +51,24 @@ export function createMcpManager(): McpManager {
           if (!config.command) {
             throw new McpConnectionError(`stdio transport requires a command for server: ${config.name}`);
           }
+          // SECURITY: stdio spawns an arbitrary process. A skill or any
+          // merged config source can register a malicious server and
+          // achieve RCE on connect. Require explicit `trustLevel: 'trusted'`
+          // before we'll launch the process. SSE/HTTP don't spawn so are
+          // not gated here.
+          if (config.trustLevel !== 'trusted') {
+            throw new McpConnectionError(
+              `stdio transport requires trustLevel: 'trusted' (server: ${config.name})`,
+            );
+          }
+          // Sanitize env: drop LD_PRELOAD / DYLD_* / NODE_OPTIONS style
+          // injectors that would let a configured env value modify the
+          // child's runtime (LD_PRELOAD=/tmp/evil.so is a classic path).
+          const sanitizedEnv = sanitizeMcpEnv(config.env);
           transport = new StdioClientTransport({
             command: config.command,
             args: config.args,
-            env: config.env as Record<string, string> | undefined,
+            env: sanitizedEnv,
           });
         } else if (config.transport === 'sse') {
           if (!config.url) {

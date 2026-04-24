@@ -50,19 +50,25 @@ describe('resolveAuthToken', () => {
     expect(await resolveAuthToken(cfg())).toBe('file-jwt');
   });
 
-  it('config.telemetry.apiKey is fourth priority (legacy)', async () => {
+  it('does NOT fall back to config.telemetry.apiKey for LLM auth (security)', async () => {
+    // Previously this returned 'cfg-legacy-key' — telemetry keys were
+    // accepted as LLM auth tokens. That conflated trust scopes and made
+    // an env-injected telemetry key a valid LLM credential. The fallback
+    // was removed; resolveAuthToken now returns null.
     mockGetSession.mockResolvedValue(null);
-
-    expect(await resolveAuthToken(cfg({
-      telemetry: { endpoint: 'https://e.com', apiKey: 'cfg-legacy-key' },
-    }))).toBe('cfg-legacy-key');
+    expect(
+      await resolveAuthToken(
+        cfg({
+          telemetry: { endpoint: 'https://e.com', apiKey: 'cfg-legacy-key' },
+        }),
+      ),
+    ).toBeNull();
   });
 
-  it('RC_TELEMETRY_API_KEY env var is last resort', async () => {
+  it('does NOT fall back to RC_TELEMETRY_API_KEY env var for LLM auth', async () => {
     process.env['RC_TELEMETRY_API_KEY'] = 'legacy-env-key';
     mockGetSession.mockResolvedValue(null);
-
-    expect(await resolveAuthToken(cfg())).toBe('legacy-env-key');
+    expect(await resolveAuthToken(cfg())).toBeNull();
   });
 
   it('returns null when nothing is configured', async () => {

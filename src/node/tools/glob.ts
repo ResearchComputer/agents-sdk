@@ -16,6 +16,12 @@ async function* nodeGlob(pattern: string, options: { cwd: string }): AsyncIterab
   }
 
   // Fallback for Node 20: recursive readdir + simple glob-to-regex conversion.
+  //
+  // Crucial detail: skip symlinks on traversal. A symlink inside the
+  // sandbox pointing to /etc or another user's $HOME must NOT expand
+  // results outside the allowed root. Dirent.isDirectory() follows the
+  // link for entries from readdir withFileTypes, so we explicitly check
+  // isSymbolicLink() first and drop the entry.
   async function* walk(dir: string, base: string): AsyncIterable<string> {
     let items: import('node:fs').Dirent[];
     try {
@@ -24,10 +30,11 @@ async function* nodeGlob(pattern: string, options: { cwd: string }): AsyncIterab
       return;
     }
     for (const item of items) {
+      if (item.isSymbolicLink()) continue;
       const rel = base ? `${base}/${item.name}` : item.name;
       if (item.isDirectory()) {
         yield* walk(path.join(dir, item.name), rel);
-      } else {
+      } else if (item.isFile()) {
         yield rel;
       }
     }

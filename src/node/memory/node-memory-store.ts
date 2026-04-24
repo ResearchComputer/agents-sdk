@@ -68,12 +68,18 @@ export function createNodeMemoryStore(dir: string): MemoryStore {
       assertSingleLine('name', memory.name);
       assertSingleLine('description', memory.description);
       assertSingleLine('type', memory.type);
-      await fs.mkdir(dir, { recursive: true });
+      await fs.mkdir(dir, { recursive: true, mode: 0o700 });
       const filename = sanitizeFilename(memory.name) + '.md';
       const filePath = path.join(dir, filename);
       const tmpPath = `${filePath}.tmp`;
-      await fs.writeFile(tmpPath, serializeMemory(memory), 'utf-8');
+      await fs.writeFile(tmpPath, serializeMemory(memory), {
+        encoding: 'utf-8',
+        mode: 0o600,
+      });
       await fs.rename(tmpPath, filePath);
+      await fs.chmod(filePath, 0o600).catch(() => {
+        /* best-effort on FSes that don't support chmod */
+      });
     },
     async remove(name: string): Promise<void> {
       const filename = sanitizeFilename(name) + '.md';

@@ -8,12 +8,24 @@ import { safeSessionFileId } from './safe-id.js';
 export function createNodeSessionStore(dir: string): SessionStore {
   return {
     async save(snapshot: SessionSnapshot): Promise<void> {
-      await fs.mkdir(dir, { recursive: true });
+      // mode 0o700 for the directory (user-only) and 0o600 for the file —
+      // session snapshots contain full conversation history including any
+      // secrets the user or LLM typed, so on multi-user hosts they must
+      // not be world/group readable. Best-effort chmod in case umask
+      // masked the mode flag (e.g. 0022 still gives 0600 from 0600,
+      // but some FSes ignore mode on writeFile).
+      await fs.mkdir(dir, { recursive: true, mode: 0o700 });
       const safeId = safeSessionFileId(snapshot.id);
       const filePath = path.join(dir, `${safeId}.json`);
       const tmpPath = `${filePath}.tmp`;
-      await fs.writeFile(tmpPath, JSON.stringify(snapshot, null, 2), 'utf-8');
+      await fs.writeFile(tmpPath, JSON.stringify(snapshot, null, 2), {
+        encoding: 'utf-8',
+        mode: 0o600,
+      });
       await fs.rename(tmpPath, filePath);
+      await fs.chmod(filePath, 0o600).catch(() => {
+        /* chmod not supported on some FSes (SMB/NFS) — best-effort */
+      });
     },
 
     async load(id: string): Promise<SessionSnapshot | null> {

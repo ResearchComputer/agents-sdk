@@ -92,15 +92,14 @@ export async function initiateLogin(options?: { port?: number }): Promise<Sessio
       // State is carried in the path segment, not a query param, to avoid
       // collisions with the token/stytch_token_type params that Stytch appends
       // to the redirect_url. Expected path: /callback/{state}
+      //
+      // SECURITY: return a uniform 404 for any non-matching path. Previously
+      // we returned 400 "Invalid state" for /callback/* with the wrong state
+      // vs 404 for other paths — that gave any local probe an oracle to
+      // distinguish "login in progress" from "idle" and leaked the path
+      // prefix. Uniform 404 eliminates the oracle.
       const expectedPath = `/callback/${state}`;
       if (url.pathname !== expectedPath) {
-        // Mismatched state (or a probe for /callback without state) → 400.
-        // Any other path → 404.
-        if (url.pathname.startsWith('/callback/') || url.pathname === '/callback') {
-          res.writeHead(400, { 'Content-Type': 'text/plain' });
-          res.end('Invalid state');
-          return;
-        }
         res.writeHead(404);
         res.end();
         return;

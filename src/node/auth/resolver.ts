@@ -3,15 +3,18 @@ import type { AgentConfig } from '../../core/types.js';
 import { getSession } from './session.js';
 
 /**
- * Resolves the auth token for LLM proxy and telemetry calls.
+ * Resolves the auth token for LLM proxy calls.
  * Priority:
  *   1. config.authToken
  *   2. RC_AUTH_TOKEN env var
  *   3. ~/.rc-agents/auth.json (via getSession)
- *   4. config.telemetry.apiKey (legacy)
- *   5. RC_TELEMETRY_API_KEY env var (legacy)
  *
  * Returns null if none found (caller decides whether to throw).
+ *
+ * SECURITY NOTE: this intentionally does NOT fall back to the telemetry
+ * API key. Telemetry ingest keys are scoped to upload-only; treating them
+ * as LLM auth confused two trust scopes and made env-injected
+ * RC_TELEMETRY_API_KEY a valid LLM credential.
  */
 export async function resolveAuthToken(config: AgentConfig): Promise<string | null> {
   if (config.authToken) return config.authToken;
@@ -19,11 +22,6 @@ export async function resolveAuthToken(config: AgentConfig): Promise<string | nu
 
   const session = await getSession();
   if (session) return session.sessionJwt;
-
-  if (typeof config.telemetry === 'object' && config.telemetry?.apiKey) {
-    return config.telemetry.apiKey;
-  }
-  if (process.env.RC_TELEMETRY_API_KEY) return process.env.RC_TELEMETRY_API_KEY;
 
   return null;
 }
