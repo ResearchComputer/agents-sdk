@@ -17,6 +17,8 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Typecheck
         run: bun run lint
+      - name: Typecheck examples
+        run: bun run lint:examples
       - name: Test with coverage
         run: bun run test:coverage
       - name: Upload coverage report
@@ -26,6 +28,45 @@ jobs:
           name: coverage-report
           path: coverage/
           retention-days: 14
+
+  wasm-smoke:
+    # Validate that the WASM componentize pipeline still works even when
+    # only src/core/** changed. A pure-TS PR could break the WIT contract
+    # without hitting the python-sdk job; this fast job catches it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.2
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Build core.wasm
+        run: bun run build:wasm
+      - name: Verify WASM artifacts exist
+        run: |
+          set -eux
+          test -s src/python/flash_agents/wasm/core.wasm
+          test -s src/python/flash_agents/wasm/CORE_WASM_SHA256.txt
+
+  tarball-smoke:
+    # Pack the npm tarball and verify loadSchema resolves for a consumer
+    # installing from the wheel. Would have caught the docs/spec/schemas
+    # shipping gap where loadSchema threw for every external consumer.
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Build + pack + install + smoke import
+        run: bash scripts/test-tarball-install.sh
 
   python-sdk:
     runs-on: ubuntu-latest
@@ -52,3 +93,13 @@ jobs:
       - name: Run Python tests
         working-directory: src/python
         run: python -m pytest -q
+      - name: Build and smoke-test the wheel
+        # Would have caught the CORE_WASM_SHA256.txt missing-from-wheel bug.
+        working-directory: src/python
+        run: |
+          set -eux
+          python -m pip install --upgrade build
+          python -m build --wheel --outdir dist
+          python -m venv /tmp/smoke-venv
+          /tmp/smoke-venv/bin/pip install dist/*.whl
+          /tmp/smoke-venv/bin/python -c "from flash_agents.wasm.host import wasm_path; print('wheel OK', wasm_path())"
