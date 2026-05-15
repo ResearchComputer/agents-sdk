@@ -1,8 +1,11 @@
 {
   "name": "@researchcomputer/agents-sdk",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Coding agent SDK built on pi-ai and pi-agent-core",
   "type": "module",
+  "workspaces": [
+    "docs"
+  ],
   "main": "./dist/node/index.js",
   "types": "./dist/node/index.d.ts",
   "exports": {

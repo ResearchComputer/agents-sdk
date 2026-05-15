@@ -1,4 +1,7 @@
-# Examples
+---
+title: Examples
+description: Practical usage patterns and recipes.
+---
 
 Practical usage patterns and recipes for the `@researchcomputer/agents-sdk`.
 
@@ -629,7 +632,7 @@ With `'summarize'` strategy, the agent will first generate a summary of the cont
 
 → See [`docs/embedding-core.md`](./embedding-core.md) for the full guide.
 
-The short version: `src/core/` has no `node:*` imports. You can import `createAgentCore` from `@researchcomputer/agents-sdk/core` and supply your own `CoreAdapters` implementations, or build `core.wasm` via `npm run build:wasm` and embed it as a WebAssembly Component. [`examples/python-stub/`](../examples/python-stub) is the reference implementation for the WASM path.
+The short version: `src/core/` has no `node:*` imports. You can import `createAgentCore` from `@researchcomputer/agents-sdk/core` and supply your own `CoreAdapters` implementations, or build `core.wasm` via `npm run build:wasm` and embed it as a WebAssembly Component. [`examples/python-stub/`](https://github.com/ResearchComputer/agents-sdk/tree/main/examples/python-stub) is the reference implementation for the WASM path.
 
 **Use case:** Running the agent loop in WASM/browser sandboxes, from Python, or in deterministic replay harnesses where ai-provider and the Node filesystem are unavailable.
 

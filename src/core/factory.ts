@@ -53,7 +53,7 @@ function applyCostState(
   }
 }
 
-function buildCostState(
+export function buildCostState(
   costTracker: import('./types.js').CostTracker,
 ): { totalTokens: number; totalCost: number; perModel: Array<{ modelId: string; tokens: number; cost: number }> } {
   const total = costTracker.total();
@@ -78,6 +78,7 @@ import { composeAgentConfig } from './skills.js';
 import { AuthRequiredError } from './errors.js';
 import { extractUserText } from './auto-fork.js';
 import { scopeAdaptersForChild } from './adapters/child-scope.js';
+import { BaseAgent } from './agents/base-agent.js';
 
 export interface AuthTokenResolver {
   resolve(): Promise<string>;
@@ -455,7 +456,13 @@ export async function createAgentCore(
     runContext,
   });
 
-  // 8. Create compression middleware
+  // 8. Resolve API key resolver early so it can be shared with both the
+  //    compression middleware (for summarization model calls) and the agent.
+  const effectiveGetApiKey = config.getApiKey ?? (
+    authToken !== null ? async (_provider: string): Promise<string | undefined> => authToken : undefined
+  );
+
+  // 9. Create compression middleware
   const maxContextTokens = config.maxContextTokens ??
     Math.max(4000, Math.floor((config.model.contextWindow || 128000) * 0.8));
 
@@ -463,15 +470,10 @@ export async function createAgentCore(
     maxTokens: maxContextTokens,
     strategy: config.compressionStrategy ?? 'truncate',
     model: config.model,
+    getApiKey: effectiveGetApiKey,
   });
 
-  // 9. Cost tracker already created at step 1 and shared with RunContext.
-
-  // 10. Create Agent
-  // Prefer user-supplied getApiKey; otherwise fall back to the resolved auth token
-  const effectiveGetApiKey = config.getApiKey ?? (
-    authToken !== null ? async (_provider: string): Promise<string | undefined> => authToken : undefined
-  );
+  // 10. Cost tracker already created at step 1 and shared with RunContext.
 
   const agent = new PiAgent({
     initialState: {
@@ -604,6 +606,7 @@ export async function createAgentCore(
     swarm = createSwarmManager({
       model: config.model,
       tools: allTools,
+      leaderAgent: agent,
       convertToLlm,
       getApiKey: effectiveGetApiKey,
       beforeToolCall: pipeline.beforeToolCall,
@@ -748,374 +751,53 @@ export async function createAgentCore(
   // Use pre-computed systemPromptHash from node wrapper
   const systemPromptHash = config.systemPromptHash;
 
-  // Shutdown coordination: dispose() sets this and waits for any inflight
-  // auto-fork before tearing down adapters. Prevents child agents from being
-  // spawned against closed MCP/telemetry resources.
-  // Agent lifecycle state machine.
-  // Transitions:
-  //   idle → forking     (turn_end with a pending user message)
-  //   forking → idle     (fork resolves normally)
-  //   idle → disposing   (dispose() called while idle)
-  //   forking → disposing (dispose() called while forking;
-  //                        dispose awaits the in-flight fork then tears
-  //                        down. onBranches is skipped in this path)
-  //   disposing → disposing (second dispose() is a no-op)
-  //
-  // Using a single `autoForkState` variable instead of two independent
-  // booleans makes the invariants explicit and forces every writer to
-  // think about the transition rather than setting a flag in isolation.
-  type AutoForkState = 'idle' | 'forking' | 'disposing';
-  let autoForkState: AutoForkState = 'idle';
-  let inFlightAutoFork: Promise<void> | null = null;
-  const isDisposing = () => autoForkState === 'disposing';
-
-  async function _spawnChildren(
-    baseMessages: AgentMessage[],
-    message: string,
-    n: number
-  ): Promise<Agent[]> {
-    if (n < 0) throw new RangeError(`fork: n must be >= 0, got ${n}`);
-    if (n === 0) return [];
-    if (isDisposing()) {
-      throw new Error('fork: agent is disposing, cannot spawn children');
-    }
-
-    const childConfig: AgentCoreConfig = {
-      ...config,
-      sessionId: undefined,
-      autoFork: undefined,
-    };
-
-    // Optimization: use completeN for the first turn when possible.
-    const canUseCompleteN =
-      !config.streamFn &&
-      n > 1 &&
-      (config.model.api === 'openai-completions' || config.model.api === 'openai-responses');
-
-    if (canUseCompleteN) {
-      const userMsg: AgentMessage = {
-        role: 'user',
-        content: message,
-        timestamp: Date.now(),
-      } as AgentMessage;
-      const contextMessages = [...baseMessages, userMsg];
-      const llmMessages = await convertToLlm(contextMessages);
-      const toolDefs = allTools.map((t) => ({
-        name: t.name,
-        description: t.description,
-        parameters: t.parameters,
-      }));
-      const ctx = {
-        systemPrompt,
-        messages: llmMessages,
-        tools: toolDefs,
-      };
-
-      // Resolve dynamic API key if configured
-      const apiKey = config.getApiKey
-        ? await config.getApiKey(config.model.provider)
-        : undefined;
-      const firstResponses = await adapters.llmClient.completeN(
-        config.model,
-        ctx,
-        n,
-        apiKey ? { apiKey } : undefined,
-      );
-
-      // If ANY pre-fetched response contains tool calls, fall back to the
-      // sequential prompt path for ALL children. The prior implementation
-      // mixed: children whose first response had tool calls re-prompted
-      // from scratch (discarding the pre-fetched response), while
-      // no-tool-call siblings used the pre-fetched response as-is. That
-      // produced systematic divergence — the re-prompted child ran N LLM
-      // rounds while the pre-seeded children ran 0. Worse, the discarded
-      // LLM calls were billed against the parent's cost tracker via
-      // completeN but never recorded per-child.
-      //
-      // The plan's Option B (pre-seed tool-call children with their
-      // fetched response and continue from tool execution) needs upstream
-      // support from pi-agent-core for a promptWithSeed API. Until then,
-      // Option A: drop the optimization when any response has tool calls.
-      const anyHasToolCalls = firstResponses.some((r) =>
-        r.content.some((b) => b.type === 'toolCall'),
-      );
-      if (anyHasToolCalls) {
-        const children = await Promise.all(
-          Array.from({ length: n }, (_, i) =>
-            createAgentCore(childConfig, scopeAdaptersForChild(adapters, runContext.sessionId, i)),
-          ),
-        );
-        await Promise.all(
-          children.map((child) => {
-            child.agent.replaceMessages(structuredClone(baseMessages) as AgentMessage[]);
-            return child.prompt(message);
-          }),
-        );
-        return children;
-      }
-
-      const children = await Promise.all(
-        Array.from({ length: n }, (_, i) =>
-          createAgentCore(childConfig, scopeAdaptersForChild(adapters, runContext.sessionId, i)),
-        ),
-      );
-
-      await Promise.all(
-        children.map((child, i) => {
-          const msgs = structuredClone(baseMessages) as AgentMessage[];
-          msgs.push(structuredClone(userMsg));
-          msgs.push(firstResponses[i] as AgentMessage);
-          child.agent.replaceMessages(msgs);
-          return Promise.resolve();
-        }),
-      );
-
-      return children;
-    }
-
-    // Fallback: original behavior
-    const children = await Promise.all(
-      Array.from({ length: n }, (_, i) =>
-        createAgentCore(childConfig, scopeAdaptersForChild(adapters, runContext.sessionId, i)),
-      ),
-    );
-
-    await Promise.all(
-      children.map((child) => {
-        child.agent.replaceMessages(structuredClone(baseMessages) as AgentMessage[]);
-        return child.prompt(message);
-      })
-    );
-
-    return children;
-  }
-
-  const sdkAgent: Agent = {
-    agent,
-    mcp,
-    sessions: {
-      save: (snapshot) => sessions.save(snapshot),
-      load: (id) => sessions.load(id),
-      list: () => sessions.list(),
-    },
-    memory: {
-      load: () => adapters.memoryStore.load(),
-      save: (memory) => adapters.memoryStore.save(memory),
-      remove: (name) => adapters.memoryStore.remove(name),
-      retrieve: (mems, context) => retrieve(mems, context),
-    },
-    swarm,
-    costTracker,
-
-    async prompt(message: string, images?: ImageContent[], extraSystem?: string): Promise<void> {
-      if (extraSystem) {
-        const original = agent.state.systemPrompt;
-        agent.setSystemPrompt(`${original}\n\n${extraSystem}`);
-        try {
-          await agent.prompt(message, images);
-        } finally {
-          agent.setSystemPrompt(original);
-        }
-        return;
-      }
-      await agent.prompt(message, images);
-    },
-
-    async dispose(): Promise<void> {
-      // State transitions handled explicitly:
-      //  - 'disposing' → already tearing down, no-op.
-      //  - 'forking'   → flip to 'disposing' so the fork's .then()
-      //                  skips onBranches, then await the fork promise
-      //                  before continuing teardown.
-      //  - 'idle'      → straight to 'disposing'.
-      if (autoForkState === 'disposing') return;
-      const wasForking = autoForkState === 'forking';
-      autoForkState = 'disposing';
-      if (wasForking && inFlightAutoFork) {
-        try {
-          await inFlightAutoFork;
-        } catch {
-          // auto-fork errors are already routed to autoFork.onError
-        }
-      }
-
-      // 1. Run SessionEnd hooks first
-      await runLifecycleHooks(hooks, 'SessionEnd', runContext);
-
-      // 2. Finalize telemetry
-      const telemetry = telemetryCollector.finalize();
-
-      // 3. Save enriched session snapshot. v2 carries contextState so a
-      // subsequent resume can rebuild cost/memory/tool-interruption state.
-      // Trajectory identity comes from the writer when present; for hosts
-      // that skipped the writer adapter we synthesize a ULID alias.
-      const trajId = trajectoryWriter.trajectoryId;
-      const lastEventId = trajectoryWriter.currentEventId() ?? null;
-
-      const contextState: ContextState = {
-        selectedMemories: memorySelections.map((s) => ({
-          name: s.memory.name,
-          score: s.relevanceScore,
-          updatedAt: s.updatedAt,
-        })),
-        costState: buildCostState(costTracker),
-        interruptedToolCallIds: [...resumedInterruptedToolCallIds],
-        ...(swarm ? { swarmState: swarm.serializeState() } : {}),
-      };
-
-      const snapshot: SessionSnapshot = {
-        version: 2,
-        id: runContext.sessionId,
-        trajectoryId: trajId,
-        lastEventId,
-        modelId: config.model.id,
-        providerName: config.model.provider,
-        systemPromptHash,
-        memoryRefs: memories.map(m => m.name),
-        telemetry,
-        contextState,
-        createdAt: sessionCreatedAt,
-        updatedAt: Date.now(),
-      };
-
-      try {
-        await sessions.save(snapshot);
-      } catch (err) {
-        addWarning('session_save_failed', `Failed to save session: ${(err as Error).message}`, err);
-      }
-
-      try {
-        await telemetrySink.flush(snapshot);
-      } catch (err) {
-        addWarning('telemetry_flush_failed', `Failed to flush telemetry: ${(err as Error).message}`, err);
-      }
-
-      // 5. Disconnect MCP servers
-      for (const conn of mcp.getConnections()) {
-        try {
-          await mcp.disconnect(conn.name);
-        } catch (err) {
-          addWarning(
-            'mcp_disconnect_failed',
-            `Failed to disconnect MCP server ${conn.name}: ${(err as Error).message}`,
-            err,
-          );
-        }
-      }
-
-      // 6. Destroy swarm if present
-      if (swarm) {
-        try {
-          await swarm.destroyTeam('default');
-        } catch (err) {
-          addWarning('swarm_cleanup_failed', `Failed to destroy swarm: ${(err as Error).message}`, err);
-        }
-      }
-
-      // 7. Emit session_end + flush + close trajectory writer. Non-critical:
-      // any failure is recorded as a warning instead of propagated, matching
-      // the behavior of the other teardown steps.
-      if (trajectoryWriter) {
-        try {
-          trajectoryWriter.append({
-            event_type: 'session_end',
-            payload: {
-              session_id: trajectoryWriter.trajectoryId,
-              reason: 'complete',
-            },
-          });
-          await trajectoryWriter.close();
-        } catch (err) {
-          addWarning(
-            'trajectory_flush_failed',
-            `Failed to finalize trajectory: ${(err as Error).message}`,
-            err,
-          );
-        }
-      }
-    },
-
-    getWarnings(): readonly SdkWarning[] {
-      return warnings;
-    },
-
-    snapshot(): AgentSnapshot {
-      if (agent.state.isStreaming) {
-        throw new Error('snapshot: cannot snapshot while agent is streaming');
-      }
-      return {
-        id: globalThis.crypto.randomUUID(),
-        messages: structuredClone(agent.state.messages),
-        createdAt: Date.now(),
-      };
-    },
-
-    restore(snapshot: AgentSnapshot): void {
-      if (agent.state.isStreaming) {
-        throw new Error('restore: cannot restore while agent is streaming');
-      }
-      agent.replaceMessages(structuredClone(snapshot.messages));
-    },
-
-    async fork(message: string, n: number): Promise<Agent[]> {
-      return _spawnChildren(structuredClone(agent.state.messages), message, n);
-    },
-
-    // Documented alias for fork(). Kept so both names work in user code.
-    promptFork(message: string, n: number): Promise<Agent[]> {
-      return this.fork(message, n);
-    },
-
-    async forkFrom(snapshot: AgentSnapshot, message: string, n: number): Promise<Agent[]> {
-      return _spawnChildren(structuredClone(snapshot.messages), message, n);
-    },
+  const sessionManager = {
+    save: (snapshot: any) => sessions.save(snapshot),
+    load: (id: string) => sessions.load(id),
+    list: () => sessions.list(),
   };
 
-  // Wire auto-fork if configured
-  if (config.autoFork) {
-    const autoFork = config.autoFork;
-    let lastUserMessage: string | undefined;
-
-    agent.subscribe((event) => {
-      if (event.type === 'message_start') {
-        const msg = event.message as { role: string; content: unknown };
-        if (msg.role === 'user') {
-          const text = extractUserText(msg.content);
-          if (text !== undefined) lastUserMessage = text;
-        }
+  const memoryManager = {
+    load: () => adapters.memoryStore.load(),
+    save: async (memory: any) => {
+      await adapters.memoryStore.save(memory);
+      const idx = memories.findIndex(m => m.name === memory.name);
+      if (idx !== -1) {
+        memories[idx] = memory;
+      } else {
+        memories.push(memory);
       }
+    },
+    remove: async (name: string) => {
+      await adapters.memoryStore.remove(name);
+      memories = memories.filter(m => m.name !== name);
+    },
+    retrieve: (mems: any[], context: any) => retrieve(mems, context),
+  };
 
-      if (
-        event.type === 'turn_end' &&
-        lastUserMessage &&
-        autoForkState === 'idle'
-      ) {
-        // Atomically transition idle → forking before any await, so a
-        // concurrent turn_end (overlapping tool loop) cannot double-fork.
-        autoForkState = 'forking';
-        const message = lastUserMessage;
-        lastUserMessage = undefined;
-        inFlightAutoFork = sdkAgent
-          .fork(message, autoFork.branches)
-          .then((children) => {
-            // dispose() may have flipped state to 'disposing' while the
-            // fork was in flight — skip onBranches in that case so user
-            // callbacks don't run against a half-torn-down parent.
-            if (autoForkState === 'disposing') return;
-            return autoFork.onBranches(children);
-          })
-          .catch((err) => {
-            autoFork.onError?.(err instanceof Error ? err : new Error(String(err)));
-          })
-          .finally(() => {
-            // Only transition back to idle if we weren't superseded by
-            // a dispose; disposing is terminal.
-            if (autoForkState === 'forking') autoForkState = 'idle';
-            inFlightAutoFork = null;
-          });
-      }
-    });
-  }
+  return new BaseAgent({
+    agent,
+    mcp,
+    sessions: sessionManager,
+    memory: memoryManager,
+    swarm,
+    costTracker,
+    warnings,
+    config,
+    adapters,
+    runContext,
+    hooks,
+    telemetryCollector,
+    telemetrySink,
+    memorySelections,
+    resumedInterruptedToolCallIds,
+    systemPromptHash,
+    sessionCreatedAt,
+    trajectoryWriter: trajectoryWriter ?? undefined,
+    addWarning,
+    allTools,
+    systemPrompt,
+    memories,
+  });
 
-  return sdkAgent;
 }

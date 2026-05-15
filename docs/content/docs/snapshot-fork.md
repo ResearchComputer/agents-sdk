@@ -1,4 +1,7 @@
-# Snapshot & Fork
+---
+title: Snapshot & Fork
+description: Checkpoint agent state and branch into parallel explorations.
+---
 
 > *Audience: developers using `createAgent()` or `createAgentCore()` and needing to branch or restore conversation state.*
 
@@ -388,7 +391,7 @@ await agent.prompt(
 - [Getting Started: Snapshot & Fork](./getting-started.md#snapshot--fork) — quick overview
 - [Core Concepts: Snapshot & Fork](./concepts.md#snapshot--fork) — architecture context
 - [Examples: Snapshot & Fork Patterns](./examples.md#snapshot--fork-patterns) — inline code recipes
-- [`examples/snapshot-restore.ts`](../examples/snapshot-restore.ts) — runnable snapshot/restore demo
-- [`examples/fork-best-of-n.ts`](../examples/fork-best-of-n.ts) — runnable best-of-N demo
-- [`examples/fork-from-snapshot.ts`](../examples/fork-from-snapshot.ts) — runnable forkFrom demo
-- [`examples/auto-fork.ts`](../examples/auto-fork.ts) — runnable auto-fork demo
+- [`examples/snapshot-restore.ts`](https://github.com/ResearchComputer/agents-sdk/blob/main/examples/snapshot-restore.ts) — runnable snapshot/restore demo
+- [`examples/fork-best-of-n.ts`](https://github.com/ResearchComputer/agents-sdk/blob/main/examples/fork-best-of-n.ts) — runnable best-of-N demo
+- [`examples/fork-from-snapshot.ts`](https://github.com/ResearchComputer/agents-sdk/blob/main/examples/fork-from-snapshot.ts) — runnable forkFrom demo
+- [`examples/auto-fork.ts`](https://github.com/ResearchComputer/agents-sdk/blob/main/examples/auto-fork.ts) — runnable auto-fork demo

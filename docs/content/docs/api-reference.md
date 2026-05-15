@@ -1,4 +1,7 @@
-# API Reference
+---
+title: API Reference
+description: Complete API documentation for @researchcomputer/agents-sdk.
+---
 
 Complete API documentation for `@researchcomputer/agents-sdk`.
 
@@ -61,7 +64,7 @@ The package exposes two entry points:
 | Import | What you get | Use when |
 |---|---|---|
 | `@researchcomputer/agents-sdk` | Node.js factory (`createAgent`), built-in tools, MCP manager, hosted auth. Re-exports everything from `./core`. | Running agents on Node.js — the common case. |
-| `@researchcomputer/agents-sdk/core` | Language-agnostic core: `createAgentCore`, adapter interfaces, types, context utilities, middleware, permissions, memory retrieval, swarm. **No `node:*` imports.** | Embedding the runtime in a non-Node host (WASM, browser sandbox, deterministic replay). See [`examples/python-stub/`](../examples/python-stub). |
+| `@researchcomputer/agents-sdk/core` | Language-agnostic core: `createAgentCore`, adapter interfaces, types, context utilities, middleware, permissions, memory retrieval, swarm. **No `node:*` imports.** | Embedding the runtime in a non-Node host (WASM, browser sandbox, deterministic replay). See [`examples/python-stub/`](https://github.com/ResearchComputer/agents-sdk/tree/main/examples/python-stub). |
 
 ---
 
@@ -181,7 +184,7 @@ interface Agent {
 
 ## Core factory
 
-> *For a walkthrough of the non-Node embedding path, see [Embedding the Core](./embedding-core.md). For the WASM ABI contract, see [`docs/spec/wasm.md`](./spec/wasm.md).*
+> *For a walkthrough of the non-Node embedding path, see [Embedding the Core](./embedding-core.md). For the WASM ABI contract, see [`docs/spec/wasm.md`](https://github.com/ResearchComputer/agents-sdk/blob/main/docs/spec/wasm.md).*
 
 The language-agnostic factory. Use this when you are building a non-Node host (WASM, browser sandbox, custom runtime). Import from `@researchcomputer/agents-sdk/core`.
 
@@ -605,10 +608,12 @@ interface SwarmManager {
   removeTeammate(teamName: string, name: string): Promise<void>;
   destroyTeam(teamName: string): Promise<void>;
   getTeam(name: string): Team | undefined;
+  serializeState(): SerializedSwarmState;
+  hydrateTeammateStub(teamName: string, record: TeamAgent): void;
 }
 ```
 
-Returned as `agent.swarm` when `enableSwarm: true`.
+Returned as `agent.swarm` when `enableSwarm: true`. Completed teammates emit a `swarmReport` message to the primary agent transcript. `SpawnTeammate` supports optional `maxTurns`, `maxTokens`, and `timeoutMs` budget fields.
 
 ### `CostTracker`
 
@@ -913,15 +918,17 @@ Converts a JSON Schema object (as returned by MCP) into a TypeBox schema for use
 function createSwarmManager(options: {
   model: Model<any>;
   tools: SdkTool[];
+  leaderAgent?: PiAgent;
   convertToLlm: (messages: AgentMessage[]) => Message[];
   getApiKey?: (provider: string) => Promise<string | undefined>;
   beforeToolCall?: (...args: any[]) => any;
   afterToolCall?: (...args: any[]) => any;
   transformContext?: (...args: any[]) => any;
+  streamFn?: StreamFn;
 }): SwarmManager
 ```
 
-Creates a swarm manager for multi-agent coordination.
+Creates a swarm manager for multi-agent coordination. `leaderAgent` lets a host bind reports and leader-directed messages to an existing primary agent instead of a manager-created internal leader.
 
 ### `createSwarmTools(teamName, swarmManager)`
 
@@ -1051,7 +1058,7 @@ interface TrajectoryEvent {
 }
 ```
 
-Events match [`docs/spec/schemas/trajectory-event.v1.schema.json`](./spec/schemas/trajectory-event.v1.schema.json) field-for-field.
+Events match [`docs/spec/schemas/trajectory-event.v1.schema.json`](https://github.com/ResearchComputer/agents-sdk/blob/main/docs/spec/schemas/trajectory-event.v1.schema.json) field-for-field.
 
 ### `TrajectoryWriter`
 

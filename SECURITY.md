@@ -23,4 +23,4 @@ Out of scope: vulnerabilities in underlying runtimes (Node, Bun, wasmtime) — p
 
 ## Known Hardening Work in Progress
 
-Documented weaknesses and fix plans live under `docs/plans/`. See `docs/plans/2026-04-24-node-sandbox-hardening.md` for the current sandbox-hardening roadmap.
+Ongoing hardening work (sandbox, telemetry privacy, Python SDK, CI) is tracked in the GitHub issue tracker. For the current sandbox-hardening roadmap, filter issues by the `area/sandbox` label.

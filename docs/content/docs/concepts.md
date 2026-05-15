@@ -1,4 +1,7 @@
-# Core Concepts
+---
+title: Core Concepts
+description: Architecture, tools, permissions, memory, sessions, MCP, swarm, and snapshots.
+---
 
 ## Table of Contents
 
@@ -24,9 +27,9 @@ The SDK is split into two layers:
 - **`src/core/`** — language-agnostic runtime. Pure TypeScript with no `node:*` imports; talks to every host service through injected adapters (LLM transport, memory store, session store, MCP manager, telemetry, auth). Published at `@researchcomputer/agents-sdk/core`.
 - **`src/node/`** — Node.js host. Supplies the default adapters (filesystem-backed memory/session stores, MCP stdio/SSE/HTTP transports, ai-provider-backed LLM client, hosted-auth resolver), the built-in tools (Read/Write/Edit/Bash/Glob/Grep/WebFetch/WebSearch/NotebookEdit/AskUser), and the browser-based login flow. Published at `@researchcomputer/agents-sdk` (default entry point).
 
-`createAgent()` is the Node factory. It builds a `CoreAdapters` bundle and hands off to `createAgentCore()`, the language-agnostic factory. Other hosts (WASM/Python stub, browser sandboxes, deterministic replays) import `createAgentCore()` directly and supply their own adapters. See [`examples/python-stub/`](../examples/python-stub) for a working Python ↔ Rust ↔ WASM embedding.
+`createAgent()` is the Node factory. It builds a `CoreAdapters` bundle and hands off to `createAgentCore()`, the language-agnostic factory. Other hosts (WASM/Python stub, browser sandboxes, deterministic replays) import `createAgentCore()` directly and supply their own adapters. See [`examples/python-stub/`](https://github.com/ResearchComputer/agents-sdk/tree/main/examples/python-stub) for a working Python ↔ Rust ↔ WASM embedding.
 
-For a step-by-step walkthrough of the non-Node embedding path, see [Embedding the Core](./embedding-core.md); for the WIT ABI contract, see [`docs/spec/wasm.md`](./spec/wasm.md).
+For a step-by-step walkthrough of the non-Node embedding path, see [Embedding the Core](./embedding-core.md); for the WIT ABI contract, see [`docs/spec/wasm.md`](https://github.com/ResearchComputer/agents-sdk/blob/main/docs/spec/wasm.md).
 
 ```
 User prompt
@@ -341,6 +344,8 @@ When `enableSwarm: true`, the agent becomes a team leader with the ability to sp
 3. The leader can use `SendMessage` to communicate with running teammates.
 4. Teammates can be dismissed with `DismissTeammate` when their work is complete.
 5. Teammate results are delivered back to the leader as `SwarmReportMessage` entries in the conversation.
+
+When swarm is enabled through `createAgent({ enableSwarm: true })`, reports are delivered to the primary agent transcript. If the primary agent is still running, the report is queued as a follow-up; otherwise it starts a new turn with the report as context.
 
 ### Merge Strategies
 

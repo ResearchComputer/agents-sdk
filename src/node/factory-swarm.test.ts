@@ -24,6 +24,15 @@ describe('createAgent — Phase 4 swarm resume', () => {
     await fs.rm(memoryDir, { recursive: true, force: true });
   });
 
+  async function waitFor(assertion: () => boolean | undefined, timeoutMs = 500): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (assertion()) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(assertion()).toBe(true);
+  }
+
   it('persists serialized swarm state in contextState on dispose', async () => {
     const model = getModel('openai', 'gpt-4o-mini');
     const a = await createAgent({
@@ -181,6 +190,70 @@ describe('createAgent — Phase 4 swarm resume', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(observedApiKeys).toContain('t');
+    await a.dispose();
+  });
+
+  it('delivers spawned teammate reports to the primary agent transcript', async () => {
+    const outputs = ['teammate report body', 'leader processed report'];
+    let callIndex = 0;
+    const streamFn: StreamFn = (model) => {
+      const stream = createAssistantMessageEventStream();
+      const msg = {
+        role: 'assistant' as const,
+        content: [{ type: 'text' as const, text: outputs[callIndex++] ?? 'extra call' }],
+        stopReason: 'stop' as const,
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        timestamp: Date.now(),
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+      };
+      stream.push({ type: 'start', partial: msg });
+      stream.push({ type: 'done', reason: 'stop', message: msg });
+      return stream;
+    };
+
+    const model = getModel('openai', 'gpt-4o-mini');
+    const a = await createAgent({
+      model,
+      permissionMode: 'allowAll',
+      authToken: 't',
+      sessionDir,
+      memoryDir,
+      enableSwarm: true,
+      streamFn,
+    });
+
+    await a.swarm!.spawnTeammate('default', {
+      name: 'reporter',
+      taskId: 't-report',
+      prompt: 'do work',
+      budget: { maxTurns: 3 },
+    });
+
+    await waitFor(() =>
+      a.agent.state.messages.some((m: any) => m.role === 'swarmReport' && m.content === 'teammate report body'),
+    );
+    await a.agent.waitForIdle();
+
+    const report = a.agent.state.messages.find((m: any) => m.role === 'swarmReport') as any;
+    expect(report.fromAgent).toBe('reporter');
+    expect(report.taskId).toBe('t-report');
+    expect(
+      a.agent.state.messages.some((m: any) =>
+        m.role === 'assistant' &&
+        Array.isArray(m.content) &&
+        m.content.some((part: any) => part.type === 'text' && part.text === 'leader processed report'),
+      ),
+    ).toBe(true);
+
     await a.dispose();
   });
 });

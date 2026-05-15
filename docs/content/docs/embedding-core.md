@@ -1,4 +1,7 @@
-# Embedding the Core Runtime
+---
+title: Embedding the Core
+description: Build a non-Node host (WASM, browser, Python, Rust, Go) for the agent loop.
+---
 
 > *Audience: developers building a non-Node host for the agent loop — WASM, browser sandbox, Python, Rust, Go, or a deterministic replay harness. If you are building a Node.js app, start with [Getting Started](./getting-started.md) instead.*
 
@@ -34,7 +37,7 @@ If none of those apply, use `createAgent()` — this guide is not for you.
 | **ES module import** | JS/TS hosts that can `import` ESM (browser workers, Deno, Bun, non-Node ESM runtimes) | `createAgentCore` from `@researchcomputer/agents-sdk/core` | npm package |
 | **WASM Component** | Non-JS hosts (Rust, Python, Go, …) that can load a WebAssembly Component | `agent` resource from `rc-agent-core` world | `core.wasm` built by `npm run build:wasm` |
 
-Under the hood these are the same runtime. The WASM Component path wraps the ES module in a Component Model interface so any language with a Component Model runtime can drive it. The ABI contract lives in [`docs/spec/wasm.md`](./spec/wasm.md) and the WIT file at [`examples/python-stub/wasm/world.wit`](../examples/python-stub/wasm/world.wit).
+Under the hood these are the same runtime. The WASM Component path wraps the ES module in a Component Model interface so any language with a Component Model runtime can drive it. The ABI contract lives in [`docs/spec/wasm.md`](https://github.com/ResearchComputer/agents-sdk/blob/main/docs/spec/wasm.md) and the WIT file at [`examples/python-stub/wasm/world.wit`](https://github.com/ResearchComputer/agents-sdk/blob/main/examples/python-stub/wasm/world.wit).
 
 ## The core runtime and its adapters
 
@@ -229,11 +232,11 @@ world rc-agent-core {
 }
 ```
 
-The host implements `host-llm` (one LLM streaming call) and calls `agent.agent` to run turns. See [`docs/spec/wasm.md`](./spec/wasm.md) for the full contract — this guide shows you how to wire one up; that document is the reference.
+The host implements `host-llm` (one LLM streaming call) and calls `agent.agent` to run turns. See [`docs/spec/wasm.md`](https://github.com/ResearchComputer/agents-sdk/blob/main/docs/spec/wasm.md) for the full contract — this guide shows you how to wire one up; that document is the reference.
 
 ## Reference implementation: the Python stub
 
-[`examples/python-stub/`](../examples/python-stub) is a working Python ↔ Rust ↔ WASM host. File map:
+[`examples/python-stub/`](https://github.com/ResearchComputer/agents-sdk/tree/main/examples/python-stub) is a working Python ↔ Rust ↔ WASM host. File map:
 
 | File | Role |
 |---|---|
@@ -264,5 +267,5 @@ Use it as the starting template for new hosts.
 
 - [API Reference → Core factory](./api-reference.md#core-factory) — full type signatures for `createAgentCore` and `CoreAdapters`.
 - [Core Concepts → Architecture Overview](./concepts.md#architecture-overview) — the core/node split and how skills compose.
-- [`docs/spec/wasm.md`](./spec/wasm.md) — the WIT ABI reference.
-- [`examples/python-stub/`](../examples/python-stub) — working reference implementation.
+- [`docs/spec/wasm.md`](https://github.com/ResearchComputer/agents-sdk/blob/main/docs/spec/wasm.md) — the WIT ABI reference.
+- [`examples/python-stub/`](https://github.com/ResearchComputer/agents-sdk/tree/main/examples/python-stub) — working reference implementation.

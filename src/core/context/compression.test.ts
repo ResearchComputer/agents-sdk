@@ -1,8 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { estimateTokens, segmentMessages, createCompressionMiddleware, messageText } from './compression.js';
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
-import type { UserMessage, AssistantMessage, ToolResultMessage } from '@researchcomputer/ai-provider';
-import type { MemoryInjectionMessage, CompactionSummaryMessage } from '../types.js';
+import {
+  fauxAssistantMessage,
+  fauxText,
+  registerFauxProvider,
+  type AssistantMessage,
+  type ToolResultMessage,
+  type UserMessage,
+} from '@researchcomputer/ai-provider';
+import type { CompactionSummaryMessage, MemoryInjectionMessage } from '../types.js';
 
 function makeUser(text: string, ts = 1): UserMessage {
   return { role: 'user', content: text, timestamp: ts };
@@ -196,7 +203,7 @@ describe('createCompressionMiddleware', () => {
     expect(result[result.length - 2]).toEqual(msgs[msgs.length - 2]);
   });
 
-  it('summarize strategy falls back to truncate', async () => {
+  it('summarize strategy falls back to truncate when no model is configured', async () => {
     const longText = 'x'.repeat(400);
     const msgs: AgentMessage[] = [
       makeUser(longText, 1) as AgentMessage,
@@ -211,6 +218,84 @@ describe('createCompressionMiddleware', () => {
     });
     const result = await middleware(msgs);
     expect(result.length).toBeLessThanOrEqual(msgs.length);
+    // No summary message should be present.
+    for (const m of result) {
+      expect((m as { role?: string }).role).not.toBe('summary');
+    }
+  });
+
+  it('summarize strategy replaces older messages with a summary message', async () => {
+    const reg = registerFauxProvider();
+    try {
+      reg.setResponses([
+        fauxAssistantMessage([fauxText('CONDENSED SUMMARY OF OLDER TURNS')]),
+      ]);
+
+      const longText = 'x'.repeat(400); // 100 estimated tokens
+      const olderMessages: AgentMessage[] = [
+        makeUser(longText, 1) as AgentMessage,
+        makeAssistant(longText, 2) as AgentMessage,
+        makeUser(longText, 3) as AgentMessage,
+        makeAssistant(longText, 4) as AgentMessage,
+      ];
+      const recentMessages: AgentMessage[] = [
+        makeUser('recent q', 5) as AgentMessage,
+        makeAssistant('recent a', 6) as AgentMessage,
+        makeToolResult('recent r', 7) as AgentMessage,
+      ];
+      const msgs = [...olderMessages, ...recentMessages];
+
+      const middleware = createCompressionMiddleware({
+        maxTokens: 100,
+        strategy: 'summarize',
+        protectedRecentTurns: 1,
+        model: reg.getModel(),
+        getApiKey: async () => 'test-key',
+      });
+
+      const result = await middleware(msgs);
+
+      expect(result).toHaveLength(1 + recentMessages.length);
+      const summary = result[0] as CompactionSummaryMessage;
+      expect(summary.role).toBe('summary');
+      expect(summary.content).toContain('CONDENSED SUMMARY OF OLDER TURNS');
+      expect(summary.compactedCount).toBe(olderMessages.length);
+      // Recent messages are preserved verbatim.
+      for (let i = 0; i < recentMessages.length; i++) {
+        expect(result[i + 1]).toEqual(recentMessages[i]);
+      }
+      expect(reg.state.callCount).toBe(1);
+    } finally {
+      reg.unregister();
+    }
+  });
+
+  it('summarize strategy falls back to truncate when getApiKey returns nothing', async () => {
+    const reg = registerFauxProvider();
+    try {
+      const longText = 'x'.repeat(400);
+      const msgs: AgentMessage[] = [
+        makeUser(longText, 1) as AgentMessage,
+        makeAssistant(longText, 2) as AgentMessage,
+        makeUser('recent', 3) as AgentMessage,
+        makeAssistant('recent', 4) as AgentMessage,
+      ];
+      const middleware = createCompressionMiddleware({
+        maxTokens: 50,
+        strategy: 'summarize',
+        protectedRecentTurns: 1,
+        model: reg.getModel(),
+        getApiKey: async () => undefined,
+      });
+      const result = await middleware(msgs);
+      for (const m of result) {
+        expect((m as { role?: string }).role).not.toBe('summary');
+      }
+      // The faux provider must not have been called.
+      expect(reg.state.callCount).toBe(0);
+    } finally {
+      reg.unregister();
+    }
   });
 
   it('handles abort signal', async () => {

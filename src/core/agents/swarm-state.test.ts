@@ -26,6 +26,43 @@ function makeSwarm(): ReturnType<typeof createSwarmManager> {
   });
 }
 
+function makeTextStreamFn(outputs: string[]) {
+  let index = 0;
+  return ((model: Model<any>) => {
+    const stream = createAssistantMessageEventStream();
+    const text = outputs[index++] ?? outputs[outputs.length - 1] ?? '';
+    const msg = {
+      role: 'assistant' as const,
+      content: [{ type: 'text' as const, text }],
+      stopReason: 'stop' as const,
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      timestamp: Date.now(),
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
+    stream.push({ type: 'start', partial: msg });
+    stream.push({ type: 'done', reason: 'stop', message: msg });
+    return stream;
+  }) as any;
+}
+
+async function waitFor(assertion: () => boolean | undefined, timeoutMs = 500): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (assertion()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  expect(assertion()).toBe(true);
+}
+
 describe('swarm.serializeState', () => {
   it('returns { teams: [] } when no teams exist', () => {
     const s = makeSwarm();
@@ -160,5 +197,41 @@ describe('swarm.hydrateTeammateStub', () => {
     expect(() =>
       s.sendMessage('leader', 'stub-mail', { role: 'user', content: 'hi' } as unknown as AgentMessage),
     ).toThrow(/stub|re-dispatch/i);
+  });
+
+  it('delivers a completed teammate result as a swarmReport to the leader', async () => {
+    const s = createSwarmManager({
+      model: fakeModel(),
+      convertToLlm: (msgs: AgentMessage[]) => msgs as any,
+      streamFn: makeTextStreamFn(['teammate findings', 'leader acknowledged']),
+    });
+    s.createTeam({ name: 'default' });
+
+    const teammate = await s.spawnTeammate('default', {
+      name: 'researcher',
+      taskId: 'task-report',
+      prompt: 'inspect the repo',
+      budget: { maxTurns: 5 },
+    });
+    const team = s.getTeam('default')!;
+    const leaderAgent = (team.leader as any).agent;
+
+    await waitFor(() =>
+      leaderAgent.state.messages.some((m: any) => m.role === 'swarmReport' && m.content === 'teammate findings'),
+    );
+    await leaderAgent.waitForIdle();
+
+    const report = leaderAgent.state.messages.find((m: any) => m.role === 'swarmReport') as any;
+    expect(report.fromAgent).toBe('researcher');
+    expect(report.taskId).toBe('task-report');
+    expect(teammate.status).toBe('idle');
+    expect(teammate.terminationReason).toBe('taskComplete');
+    expect(
+      leaderAgent.state.messages.some((m: any) =>
+        m.role === 'assistant' &&
+        Array.isArray(m.content) &&
+        m.content.some((part: any) => part.type === 'text' && part.text === 'leader acknowledged'),
+      ),
+    ).toBe(true);
   });
 });

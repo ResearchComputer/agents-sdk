@@ -105,7 +105,7 @@ core.wasm  (agents-sdk TypeScript core, WebAssembly Component)
    └─ agent / event-stream — exported back to Python
 ```
 
-## Spec + plan
+## Further reading
 
-- Spec: `docs/superpowers/specs/2026-04-22-flash-agents-python-sdk-design.md`
-- Plan: `docs/superpowers/plans/2026-04-22-flash-agents-python-sdk.md`
+- ABI contract: [`docs/spec/wasm.md`](../../docs/spec/wasm.md)
+- Embedding guide: [`docs/content/docs/embedding-core.md`](../../docs/content/docs/embedding-core.md)

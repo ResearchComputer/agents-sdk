@@ -1,6 +1,7 @@
-<!-- Content placement rule: this file is the single source of truth for integration narrative and snippets. INTEGRATIONS.md at the repo root is the scannable router — keep code snippets there to ≤3 lines and link back here for detail. -->
-
-# Integrations
+---
+title: Integrations
+description: Three ways to use @researchcomputer/agents-sdk from an external codebase.
+---
 
 Three ways to use `@researchcomputer/agents-sdk` from an external codebase, depending on what you're building.
 
@@ -90,14 +91,14 @@ npm run build:wasm
 
 The Component implements the `rc-agent-core` world declared in `examples/python-stub/wasm/world.wit`. Your host provides the `host-llm` interface (one streaming LLM call) and calls the `agent` resource to run turns.
 
-Reference implementation: [`examples/python-stub/`](../examples/python-stub). It wires `core.wasm` to Python through Rust+PyO3, including a mock OpenAI-compatible LLM server for tests.
+Reference implementation: [`examples/python-stub/`](https://github.com/ResearchComputer/agents-sdk/tree/main/examples/python-stub). It wires `core.wasm` to Python through Rust+PyO3, including a mock OpenAI-compatible LLM server for tests.
 
 ### Which sub-path to pick
 
 - **2a** if your host can already run ES modules — it's lighter and avoids the Component Model entirely.
 - **2b** if your host is not a JS runtime, or if you want an ABI-stable distribution artifact (`core.wasm`) instead of an npm dependency.
 
-Both give you the same `Agent` surface. Read [Embedding the Core](./embedding-core.md) for the step-by-step guide; read [`docs/spec/wasm.md`](./spec/wasm.md) for the WIT ABI reference.
+Both give you the same `Agent` surface. Read [Embedding the Core](./embedding-core.md) for the step-by-step guide; read [`docs/spec/wasm.md`](https://github.com/ResearchComputer/agents-sdk/blob/main/docs/spec/wasm.md) for the WIT ABI reference.
 
 ## Path 3: Consume agent outputs or generate bindings
 
@@ -116,7 +117,7 @@ for line in open("trajectory.jsonl"):
     jsonschema.validate(json.loads(line), schema)
 ```
 
-For typed bindings, any JSON-Schema-to-language generator works (`quicktype`, `datamodel-code-generator`, `schemars`, …). See [`docs/spec/README.md`](./spec/README.md) for the full contract surface and language-specific loading patterns.
+For typed bindings, any JSON-Schema-to-language generator works (`quicktype`, `datamodel-code-generator`, `schemars`, …). See [`docs/spec/README.md`](https://github.com/ResearchComputer/agents-sdk/blob/main/docs/spec/README.md) for the full contract surface and language-specific loading patterns.
 
 ## Choosing a path
 
@@ -130,8 +131,8 @@ Paths are not mutually exclusive. A Node service might embed the core in a brows
 
 ## See also
 
-- [`INTEGRATIONS.md`](../INTEGRATIONS.md) — the one-page router.
+- [`INTEGRATIONS.md`](https://github.com/ResearchComputer/agents-sdk/blob/main/INTEGRATIONS.md) — the one-page router.
 - [Getting Started](./getting-started.md) — Path 1 walkthrough.
 - [Embedding the Core](./embedding-core.md) — Path 2 walkthrough.
-- [`docs/spec/README.md`](./spec/README.md) — Path 3 reference.
+- [`docs/spec/README.md`](https://github.com/ResearchComputer/agents-sdk/blob/main/docs/spec/README.md) — Path 3 reference.
 - [Core Concepts → Architecture Overview](./concepts.md#architecture-overview) — the core/node split explained.

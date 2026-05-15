@@ -15,6 +15,12 @@ MATURIN_TARGET ?=
 MATURIN_TARGET_ARG := $(if $(MATURIN_TARGET),--target $(MATURIN_TARGET),)
 MATURIN_EXTRA_ARGS ?=
 
+NPM ?= npm
+NPM_TAG ?=
+NPM_TAG_ARG := $(if $(NPM_TAG),--tag $(NPM_TAG),)
+NPM_OTP ?=
+NPM_OTP_ARG := $(if $(NPM_OTP),--otp $(NPM_OTP),)
+
 .PHONY: help
 help:
 	@printf '%s\n' \
@@ -31,13 +37,25 @@ help:
 		'  make py-release-testpypi   Clean, build, check, upload to TestPyPI' \
 		'  make py-release-pypi       Clean, build, check, upload to PyPI' \
 		'' \
+		'npm package targets:' \
+		'  make npm-version VERSION=X Bump root package.json version' \
+		'  make npm-clean             Remove dist/ and packed tarballs' \
+		'  make npm-build             Run TypeScript build (npm run build)' \
+		'  make npm-pack              Produce a local tarball via npm pack' \
+		'  make npm-publish           Publish @researchcomputer/agents-sdk to npmjs' \
+		'  make npm-publish-dry-run   Dry-run npm publish to validate the package' \
+		'  make npm-release           Clean, build, then publish to npmjs' \
+		'' \
 		'Variables:' \
 		'  PYTHON=.venv/bin/python    Python interpreter to use' \
 		'  DIST_DIR=python-dist       Output directory for artifacts' \
 		'  VERSION=0.2.0              Version for py-version / release bump targets' \
 		'  MATURIN_COMPATIBILITY=manylinux2014 Optional maturin compatibility tag' \
 		'  TWINE_USERNAME=__token__   PyPI token username' \
-		'  TWINE_PASSWORD=pypi-...    PyPI token value'
+		'  TWINE_PASSWORD=pypi-...    PyPI token value' \
+		'  NPM=npm                    npm executable (e.g. npm or bun x npm)' \
+		'  NPM_TAG=next               Optional dist-tag for npm publish' \
+		'  NPM_OTP=123456             Optional 2FA one-time password for npm publish'
 
 .PHONY: require-version
 require-version:
@@ -116,3 +134,35 @@ py-release-testpypi-version: py-version py-release-testpypi
 
 .PHONY: py-release-pypi-version
 py-release-pypi-version: py-version py-release-pypi
+
+.PHONY: npm-version
+npm-version: require-version
+	$(NPM) version "$(VERSION)" --no-git-tag-version --allow-same-version
+
+.PHONY: npm-clean
+npm-clean:
+	rm -rf dist
+	rm -f researchcomputer-agents-sdk-*.tgz
+	rm -f tsconfig.core.tsbuildinfo tsconfig.node.tsbuildinfo
+
+.PHONY: npm-build
+npm-build:
+	$(NPM) run build
+
+.PHONY: npm-pack
+npm-pack: npm-build
+	$(NPM) pack
+
+.PHONY: npm-publish-dry-run
+npm-publish-dry-run: npm-build
+	$(NPM) publish --dry-run --access public $(NPM_TAG_ARG)
+
+.PHONY: npm-publish
+npm-publish: npm-build
+	$(NPM) publish --access public $(NPM_TAG_ARG) $(NPM_OTP_ARG)
+
+.PHONY: npm-release
+npm-release: npm-clean npm-publish
+
+.PHONY: npm-release-version
+npm-release-version: npm-version npm-release

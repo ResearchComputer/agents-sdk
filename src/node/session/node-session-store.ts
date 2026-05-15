@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import type { SessionSnapshot } from '../../core/types.js';
+import { type SessionSnapshot, SessionSnapshotSchema } from '../../core/types.js';
+import { Value } from '@sinclair/typebox/value';
 import type { SessionStore } from '../../core/session/store.js';
 import { SessionLoadError } from '../../core/errors.js';
 import { safeSessionFileId } from './safe-id.js';
@@ -44,6 +45,11 @@ export function createNodeSessionStore(dir: string): SessionStore {
         parsed = JSON.parse(content);
       } catch {
         throw new SessionLoadError(`Corrupt session file: ${id}.json`);
+      }
+
+      if (!Value.Check(SessionSnapshotSchema, parsed)) {
+        const errors = [...Value.Errors(SessionSnapshotSchema, parsed)];
+        throw new SessionLoadError(`Corrupt session file (schema validation failed): ${id}.json. Errors: ${JSON.stringify(errors)}`);
       }
 
       if (parsed.version !== 2) {

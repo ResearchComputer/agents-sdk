@@ -1,4 +1,4 @@
-<!-- Content placement rule: this file is the scannable router. Keep code snippets ≤3 lines; narrative belongs in docs/integrations.md. -->
+<!-- Content placement rule: this file is the scannable router. Keep code snippets ≤3 lines; narrative belongs in docs/content/docs/integrations.md. -->
 
 # Integrating `@researchcomputer/agents-sdk`
 
@@ -9,8 +9,8 @@ Three integration paths, depending on what you're building. Pick one.
 You're writing a Node.js app that uses the SDK as a library.
 
 - **Entry point:** `createAgent()` from `@researchcomputer/agents-sdk`.
-- **Start here:** [docs/getting-started.md](./docs/getting-started.md).
-- **Full overview:** [docs/integrations.md § Path 1](./docs/integrations.md#path-1-build-on-nodejs).
+- **Start here:** [docs/getting-started.md](./docs/content/docs/getting-started.md).
+- **Full overview:** [docs/integrations.md § Path 1](./docs/content/docs/integrations.md#path-1-build-on-nodejs).
 
 ```bash
 npm install @researchcomputer/agents-sdk @researchcomputer/ai-provider
@@ -25,7 +25,7 @@ You're running the agent loop from Python, Rust, Go, a browser sandbox, or any o
 For JS runtimes that aren't Node (Deno, Bun, browser worker).
 
 - **Entry point:** `createAgentCore()` from `@researchcomputer/agents-sdk/core`.
-- **Guide:** [docs/embedding-core.md § ES module import](./docs/embedding-core.md#two-embedding-paths).
+- **Guide:** [docs/embedding-core.md § ES module import](./docs/content/docs/embedding-core.md#two-embedding-paths).
 
 ### 2b. WASM Component
 
@@ -34,7 +34,7 @@ For non-JS hosts (Rust, Python, Go, …).
 - **Artifact:** `core.wasm` built by `bun run build:wasm` (alias for `build:wasm:python`).
 - **ABI contract:** [docs/spec/wasm.md](./docs/spec/wasm.md) — authoritative: [`src/python/wit/world.wit`](./src/python/wit/world.wit).
 - **Reference implementation:** [`src/python/`](./src/python) (Rust + PyO3 + wasmtime host at `src/python/wasm-host/`; Python SDK at `src/python/flash_agents/`).
-- **Guide:** [docs/embedding-core.md § WASM Component path](./docs/embedding-core.md#the-wasm-component-path).
+- **Guide:** [docs/embedding-core.md § WASM Component path](./docs/content/docs/embedding-core.md#the-wasm-component-path).
 
 ## 3. Consume agent outputs or generate bindings
 
@@ -43,7 +43,7 @@ You're writing code that reads SDK-produced artifacts (session snapshots, trajec
 - **Contract surface:** [docs/spec/README.md](./docs/spec/README.md).
 - **Schemas:** [docs/spec/schemas/](./docs/spec/schemas).
 - **Conventions + examples:** [docs/spec/README.md § Worked example](./docs/spec/README.md#worked-example-validating-a-trajectory).
-- **Full overview:** [docs/integrations.md § Path 3](./docs/integrations.md#path-3-consume-agent-outputs-or-generate-bindings).
+- **Full overview:** [docs/integrations.md § Path 3](./docs/content/docs/integrations.md#path-3-consume-agent-outputs-or-generate-bindings).
 
 ## Not sure which path?
 
@@ -53,4 +53,4 @@ Quick heuristic:
 - Need to run the agent loop outside Node? → **Path 2**.
 - Only reading or writing agent data files? → **Path 3**.
 
-See [docs/integrations.md § Choosing a path](./docs/integrations.md#choosing-a-path) for the decision matrix with more detail.
+See [docs/integrations.md § Choosing a path](./docs/content/docs/integrations.md#choosing-a-path) for the decision matrix with more detail.

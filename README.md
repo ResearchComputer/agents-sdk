@@ -20,10 +20,10 @@ A TypeScript SDK for building coding agents powered by large language models. Bu
 
 | Document | Description |
 |---|---|
-| [Getting Started](./docs/getting-started.md) | Installation, quick start, and first agent |
-| [Core Concepts](./docs/concepts.md) | Architecture, tools, permissions, memory, sessions, MCP, swarm |
-| [API Reference](./docs/api-reference.md) | Complete API documentation with types and examples |
-| [Examples](./docs/examples.md) | Practical usage patterns and recipes |
+| [Getting Started](./docs/content/docs/getting-started.md) | Installation, quick start, and first agent |
+| [Core Concepts](./docs/content/docs/concepts.md) | Architecture, tools, permissions, memory, sessions, MCP, swarm |
+| [API Reference](./docs/content/docs/api-reference.md) | Complete API documentation with types and examples |
+| [Examples](./docs/content/docs/examples.md) | Practical usage patterns and recipes |
 
 ## Quick Start
 
@@ -55,8 +55,8 @@ Three ways to use this SDK from an external codebase:
 
 | Path | For | Start here |
 |---|---|---|
-| **Node.js library** | Apps built on Node | [docs/getting-started.md](./docs/getting-started.md) |
-| **Non-Node host** | Python, Rust, Go, browser, Deno, Bun — anywhere ES modules or WASM Components run | [docs/embedding-core.md](./docs/embedding-core.md) |
+| **Node.js library** | Apps built on Node | [docs/getting-started.md](./docs/content/docs/getting-started.md) |
+| **Non-Node host** | Python, Rust, Go, browser, Deno, Bun — anywhere ES modules or WASM Components run | [docs/embedding-core.md](./docs/content/docs/embedding-core.md) |
 | **Consuming agent outputs** | External systems reading session snapshots, trajectories, hook payloads | [docs/spec/README.md](./docs/spec/README.md) |
 
 Full router: [INTEGRATIONS.md](./INTEGRATIONS.md).

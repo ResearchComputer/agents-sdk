@@ -10,3 +10,7 @@ coverage/
 .omx/
 .worktrees/
 .pi-agent-cli/
+
+# Internal dev artifacts — live on disk, not tracked
+docs/plans/
+docs/superpowers/

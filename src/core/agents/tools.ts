@@ -13,6 +13,9 @@ export function createSwarmTools(teamName: string, swarm: SwarmManager): SdkTool
       name: Type.String({ description: 'Name for the teammate' }),
       prompt: Type.String({ description: 'Task prompt for the teammate' }),
       systemPrompt: Type.Optional(Type.String({ description: 'Optional system prompt override' })),
+      maxTurns: Type.Optional(Type.Number({ description: 'Maximum teammate turns before aborting. Default: 20', minimum: 1 })),
+      maxTokens: Type.Optional(Type.Number({ description: 'Maximum teammate tokens before aborting', minimum: 1 })),
+      timeoutMs: Type.Optional(Type.Number({ description: 'Maximum teammate runtime in milliseconds', minimum: 1 })),
     }),
     capabilities: ['swarm:mutate'],
     async execute(_toolCallId, params) {
@@ -20,7 +23,11 @@ export function createSwarmTools(teamName: string, swarm: SwarmManager): SdkTool
         name: params.name,
         prompt: params.prompt,
         taskId: globalThis.crypto.randomUUID(),
-        budget: { maxTurns: 20 },
+        budget: {
+          maxTurns: params.maxTurns ?? 20,
+          ...(params.maxTokens !== undefined ? { maxTokens: params.maxTokens } : {}),
+          ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs } : {}),
+        },
         systemPrompt: params.systemPrompt,
       });
       return {

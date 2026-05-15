@@ -1,4 +1,7 @@
-# Publishing Notes
+---
+title: Publishing Notes
+description: Operational constraints and known hazards when publishing to npm.
+---
 
 This document captures the operational constraints and known-hazards around publishing `@researchcomputer/agents-sdk` to npm.
 

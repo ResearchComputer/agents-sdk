@@ -51,10 +51,17 @@ describe('createSwarmTools', () => {
     const swarm = createMockSwarmManager();
     const tools = createSwarmTools('test-team', swarm);
     const spawn = tools.find(t => t.name === 'SpawnTeammate')!;
-    const result = await spawn.execute('call-1', { name: 'worker', prompt: 'do stuff' });
+    const result = await spawn.execute('call-1', {
+      name: 'worker',
+      prompt: 'do stuff',
+      maxTurns: 3,
+      maxTokens: 1000,
+      timeoutMs: 5000,
+    });
     expect(swarm.spawnTeammate).toHaveBeenCalledWith('test-team', expect.objectContaining({
       name: 'worker',
       prompt: 'do stuff',
+      budget: { maxTurns: 3, maxTokens: 1000, timeoutMs: 5000 },
     }));
     expect(result.content[0]).toHaveProperty('text');
   });

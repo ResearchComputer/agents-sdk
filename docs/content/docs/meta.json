@@ -1,0 +1,15 @@
+{
+  "title": "Documentation",
+  "root": true,
+  "pages": [
+    "index",
+    "getting-started",
+    "concepts",
+    "examples",
+    "api-reference",
+    "snapshot-fork",
+    "embedding-core",
+    "integrations",
+    "publishing"
+  ]
+}

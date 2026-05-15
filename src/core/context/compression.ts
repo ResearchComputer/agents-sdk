@@ -1,6 +1,7 @@
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
-import type { TextContent } from '@researchcomputer/ai-provider';
-import type { CompressionConfig, SegmentType, TranscriptSegment } from '../types.js';
+import { complete, type Context, type Message, type TextContent } from '@researchcomputer/ai-provider';
+import type { CompactionSummaryMessage, CompressionConfig, SegmentType, TranscriptSegment } from '../types.js';
+import { convertToLlm } from './converter.js';
 
 /**
  * Estimates token count as ceil(text.length / 4).
@@ -90,22 +91,21 @@ export function segmentMessages(messages: AgentMessage[]): TranscriptSegment[] {
  * - If total tokens are under 80% of maxTokens, returns unchanged
  * - Otherwise keeps as many older messages as fit in budget, starting from most recent older ones
  *
- * Summarize strategy falls back to truncate for now.
+ * Summarize strategy:
+ * - Same trigger as truncate
+ * - Asks `config.model` to summarize the older slice into a single
+ *   `CompactionSummaryMessage` and prepends it to the protected recent turns.
+ * - Falls back to truncate when the model/getApiKey is missing or the
+ *   summarization call fails.
  */
 export function createCompressionMiddleware(
   config: CompressionConfig,
 ): (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]> {
   const protectedRecentTurns = config.protectedRecentTurns ?? 3;
   const protectedMessageCount = protectedRecentTurns * 3;
+  const summaryMaxTokens = config.summaryMaxTokens ?? 2048;
 
-  if (config.strategy === 'summarize') {
-    // eslint-disable-next-line no-console
-    console.warn(
-      '[agents-sdk] compressionStrategy "summarize" is not yet implemented; falling back to "truncate".',
-    );
-  }
-
-  return async (messages: AgentMessage[], _signal?: AbortSignal): Promise<AgentMessage[]> => {
+  return async (messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[]> => {
     // Compute messageText exactly once per message. At long histories the
     // previous version called messageText on each message 3–4 times (total
     // scan, recent scan, per-segment scan), trending toward O(N²) per turn
@@ -142,6 +142,19 @@ export function createCompressionMiddleware(
       return recentMessages;
     }
 
+    if (config.strategy === 'summarize' && olderMessages.length > 0) {
+      const summary = await summarizeOlderMessages(
+        olderMessages,
+        config,
+        summaryMaxTokens,
+        signal,
+      );
+      if (summary !== null) {
+        return [summary, ...recentMessages];
+      }
+      // Fall through to truncate on failure.
+    }
+
     // Use segment-based truncation to avoid splitting mid-turn. Segment
     // objects retain the original AgentMessage references, so we map back
     // to the cached token counts via index identity.
@@ -168,4 +181,161 @@ export function createCompressionMiddleware(
 
     return [...kept, ...recentMessages];
   };
+}
+
+const SUMMARY_SYSTEM_PROMPT = [
+  'You are a transcript summarizer for a coding-agent session.',
+  'Produce a concise but information-dense summary of the conversation so the agent can resume work after older turns are dropped from context.',
+  'Preserve, in this order:',
+  '1. The user\'s goals, requirements, and constraints (verbatim wording when load-bearing).',
+  '2. Decisions made and their rationale.',
+  '3. Concrete identifiers: file paths, function/class names, env vars, commands run, and key inputs/outputs.',
+  '4. Outstanding questions, TODOs, and known failures.',
+  'Use compact bullet form grouped under short headings. Do not invent facts. Do not include greetings, sign-offs, or meta-commentary.',
+].join(' ');
+
+async function summarizeOlderMessages(
+  olderMessages: AgentMessage[],
+  config: CompressionConfig,
+  summaryMaxTokens: number,
+  signal?: AbortSignal,
+): Promise<CompactionSummaryMessage | null> {
+  if (!config.model || !config.getApiKey) return null;
+
+  let apiKey: string | undefined;
+  try {
+    apiKey = await config.getApiKey(config.model.provider);
+  } catch (err) {
+    logSummarizeFallback('failed to resolve API key', err);
+    return null;
+  }
+  if (!apiKey) {
+    logSummarizeFallback(`no API key for provider "${config.model.provider}"`);
+    return null;
+  }
+
+  const transcript = renderTranscript(olderMessages);
+  const userPrompt = [
+    'Summarize the following conversation transcript so the assistant can continue without it.',
+    'Keep concrete identifiers (file paths, function/symbol names, IDs, commands).',
+    '',
+    '--- TRANSCRIPT START ---',
+    transcript,
+    '--- TRANSCRIPT END ---',
+  ].join('\n');
+
+  const ctx: Context = {
+    systemPrompt: SUMMARY_SYSTEM_PROMPT,
+    messages: [
+      { role: 'user', content: userPrompt, timestamp: Date.now() },
+    ],
+  };
+
+  let result;
+  try {
+    result = await complete(config.model, ctx, {
+      apiKey,
+      signal,
+      maxTokens: summaryMaxTokens,
+      temperature: 0,
+    });
+  } catch (err) {
+    logSummarizeFallback('model call threw', err);
+    return null;
+  }
+
+  if (result.stopReason === 'error' || result.stopReason === 'aborted') {
+    logSummarizeFallback(`model stop reason "${result.stopReason}"`, result.errorMessage);
+    return null;
+  }
+
+  const text = extractText(result.content).trim();
+  if (text.length === 0) {
+    logSummarizeFallback('model returned empty summary');
+    return null;
+  }
+
+  return {
+    role: 'summary',
+    content: text,
+    compactedCount: olderMessages.length,
+    timestamp: Date.now(),
+  };
+}
+
+function renderTranscript(messages: AgentMessage[]): string {
+  // Reuse the standard converter so memory/summary/swarmReport messages get
+  // their human-readable prefixes; then format each LLM Message into a single
+  // text block. Tool calls and results are flattened to text so the
+  // summarizer can see them.
+  const llmMessages = convertToLlm(messages);
+  const lines: string[] = [];
+  for (let i = 0; i < llmMessages.length; i++) {
+    const m = llmMessages[i];
+    lines.push(`[${i}] ${m.role}:`);
+    lines.push(formatMessageContent(m));
+    lines.push('');
+  }
+  return lines.join('\n').trimEnd();
+}
+
+function formatMessageContent(msg: Message): string {
+  const content = msg.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return JSON.stringify(content);
+  const parts: string[] = [];
+  for (const part of content) {
+    if (!part || typeof part !== 'object') continue;
+    const type = (part as { type?: unknown }).type;
+    switch (type) {
+      case 'text': {
+        const text = (part as TextContent).text;
+        if (typeof text === 'string') parts.push(text);
+        break;
+      }
+      case 'thinking':
+        // Drop chain-of-thought from the summarization input.
+        break;
+      case 'image':
+        parts.push('[image]');
+        break;
+      case 'toolCall': {
+        const tc = part as { name?: unknown; arguments?: unknown };
+        const name = typeof tc.name === 'string' ? tc.name : 'tool';
+        let args = '';
+        try {
+          args = JSON.stringify(tc.arguments ?? {});
+        } catch {
+          args = '[unserializable]';
+        }
+        parts.push(`[toolCall ${name}] ${args}`);
+        break;
+      }
+      default: {
+        // Best-effort: stringify unknown content shapes.
+        try { parts.push(JSON.stringify(part)); } catch { /* ignore */ }
+      }
+    }
+  }
+  return parts.join('\n');
+}
+
+function extractText(content: unknown): string {
+  if (!Array.isArray(content)) return '';
+  const parts: string[] = [];
+  for (const part of content) {
+    if (part && typeof part === 'object' && (part as { type?: unknown }).type === 'text') {
+      const text = (part as TextContent).text;
+      if (typeof text === 'string') parts.push(text);
+    }
+  }
+  return parts.join('\n');
+}
+
+function logSummarizeFallback(reason: string, err?: unknown): void {
+  const detail = err instanceof Error ? err.message : err !== undefined ? String(err) : '';
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[agents-sdk] compressionStrategy "summarize" falling back to "truncate": ${reason}${detail ? ` (${detail})` : ''}`,
+  );
 }

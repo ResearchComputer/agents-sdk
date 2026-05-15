@@ -1,4 +1,7 @@
-# Getting Started
+---
+title: Getting Started
+description: Install, configure, and run your first Node.js agent.
+---
 
 > *Audience: Node.js developers using `@researchcomputer/agents-sdk` as a library. For non-Node hosts, see [Embedding the Core](./embedding-core.md).*
 
@@ -531,7 +534,7 @@ const agent = await createAgent({
 });
 ```
 
-When swarm is enabled, the agent gains `SpawnTeammate`, `SendMessage`, and `DismissTeammate` tools. The leader can delegate tasks, receive reports, and communicate with teammates in parallel.
+When swarm is enabled, the agent gains `SpawnTeammate`, `SendMessage`, and `DismissTeammate` tools. The leader can delegate tasks, receive `swarmReport` messages in its transcript, and communicate with teammates in parallel. `SpawnTeammate` accepts optional `maxTurns`, `maxTokens`, and `timeoutMs` budget controls.
 
 See [Core Concepts](./concepts.md#swarm-multi-agent) for detailed documentation.
 

@@ -33,6 +33,7 @@ describe('createAgent — Phase 2 resume', () => {
     const first = await createAgent({ model, permissionMode: 'allowAll', authToken: 't', sessionDir, memoryDir });
     first.costTracker.record(
       {
+        totalTokens: 150,
         input: 100,
         output: 50,
         cacheRead: 0,

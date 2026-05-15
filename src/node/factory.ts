@@ -13,6 +13,7 @@ import { readNodeTrajectoryFile } from './trajectory/reader.js';
 import { createNodeAuthTokenResolver, resolveAuthToken } from './auth/resolver.js';
 import { createAiProviderLlmClient } from './llm/ai-provider-client.js';
 import { getAllTools } from './tools/index.js';
+import { McpConnectionError } from '../core/errors.js';
 import type { Agent, AgentConfig, SdkWarning } from '../core/types.js';
 import { resolveTelemetryConfig } from './telemetry/resolve-config.js';
 
@@ -59,7 +60,7 @@ export async function createAgent(config: AgentConfig): Promise<Agent> {
           code: 'mcp_connect_failed',
           message: `Failed to connect MCP server ${serverConfig.name}: ${(err as Error).message}`,
           timestamp: Date.now(),
-          cause: err,
+          cause: new McpConnectionError(`Failed to connect MCP server ${serverConfig.name}: ${(err as Error).message}`, { cause: err }),
         });
       }
     }
